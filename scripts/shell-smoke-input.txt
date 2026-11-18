@@ -1,0 +1,19 @@
+.dbs
+.use verify-shop
+.insert products {"name":"Keyboard","price":100,"tags":["pc","input"]}
+.insert products {"name":"Mouse","price":25,"tags":["pc"]}
+.insert products {"name":"Monitor","price":450,"tags":["display"]}
+.count products
+.find products {"price":{"$gte":100}} {"price":-1}
+.mkindex products price
+.find products {"price":25}
+.update products {"name":"Mouse"} {"$set":{"price":30}}
+.updatemany products {"tags":"pc"} {"$set":{"inStock":true}}
+.aggregate products [{"$group":{"_id":"$inStock","n":{"$sum":1}}}]
+.schema products {"required":["name","price"],"properties":{"price":{"type":"number"}}}
+.insert products {"name":"Bad","price":"not-a-number"}
+.schema products
+.history products
+.files
+.collections
+.exit

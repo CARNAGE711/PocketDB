@@ -1,0 +1,121 @@
+{
+  "name": "pocketdb-vscode",
+  "displayName": "PocketDB for VS Code",
+  "description": "Browse and edit PocketDB databases and collections (NDJSON) from the VS Code sidebar.",
+  "version": "1.0.0",
+  "publisher": "pocketdb",
+  "license": "MIT",
+  "icon": "media/pocketdb.png",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Data Science",
+    "Other"
+  ],
+  "activationEvents": [
+    "onView:pocketdbDatabases"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "PocketDB",
+      "properties": {
+        "pocketdb.dataDir": {
+          "type": "string",
+          "default": "",
+          "description": "Absolute path to the PocketDB data directory. Leave empty to use the connection picked in the sidebar (or the app's default location)."
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "pocketdb",
+          "title": "PocketDB",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "pocketdb": [
+        {
+          "id": "pocketdbDatabases",
+          "name": "Databases"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "pocketdbDatabases",
+        "contents": "No data directory connected yet.\n[Choose Data Directory](command:pocketdb.selectDataDirectory)\n\nPocketDB databases are folders and collections are NDJSON files on your local disk — the same files the PocketDB desktop studio uses."
+      }
+    ],
+    "commands": [
+      {
+        "command": "pocketdb.selectDataDirectory",
+        "title": "PocketDB: Choose Data Directory",
+        "icon": "$(folder)"
+      },
+      {
+        "command": "pocketdb.refresh",
+        "title": "PocketDB: Refresh",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "pocketdb.openCollection",
+        "title": "Open Collection File",
+        "icon": "$(go-to-file)"
+      },
+      {
+        "command": "pocketdb.insertDocument",
+        "title": "Insert Document",
+        "icon": "$(add)"
+      },
+      {
+        "command": "pocketdb.deleteDocument",
+        "title": "Delete Document",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "pocketdb.searchDocuments",
+        "title": "Search Documents",
+        "icon": "$(search)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "pocketdb.selectDataDirectory",
+          "group": "navigation",
+          "when": "view == pocketdbDatabases"
+        },
+        {
+          "command": "pocketdb.refresh",
+          "group": "navigation",
+          "when": "view == pocketdbDatabases"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "pocketdb.openCollection",
+          "group": "inline",
+          "when": "view == pocketdbDatabases && viewItem == collection"
+        },
+        {
+          "command": "pocketdb.searchDocuments",
+          "group": "inline",
+          "when": "view == pocketdbDatabases && viewItem == collection"
+        },
+        {
+          "command": "pocketdb.insertDocument",
+          "when": "view == pocketdbDatabases && viewItem == collection"
+        },
+        {
+          "command": "pocketdb.deleteDocument",
+          "when": "view == pocketdbDatabases && viewItem == collection"
+        }
+      ]
+    }
+  }
+}

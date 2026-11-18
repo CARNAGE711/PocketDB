@@ -1,0 +1,13 @@
+PocketDB v1.1.0 — complete Electron + React + Tailwind NoSQL desktop studio
+
+- Custom NDJSON file engine with CRUD, indexes, schema validation, encryption, snapshots, history
+- Navbar-only data tools (Files / Import / MongoDB / Snapshots) with labeled buttons
+- History-aware back button (stack-based, cap 50) — no more jumping to start page
+- Pinned collections, recents, count chips, db stats chip, filter dropdowns in switcher
+- Alt+1…4 shortcuts (dashboard / collection / pipeline / files vault)
+- SnapshotsDialog (create / restore two-step confirm / delete)
+- Dashboard: stat tiles, collection cards, ghost New collection, hero buttons
+- Richer iconography: pager chevrons, empty-state icons (Inbox/History/Key/Archive/CloudOff/SearchX), stats-chip HardDrive
+- Offline by design: CSP default-src 'self', no external fonts/CDNs, updater startup-inert
+- CLI shell REPL with de-async'd insert and promise-error hardening
+- Packaged as NSIS installer (96 MB), fully verified (engine/server/connection suites all green)
