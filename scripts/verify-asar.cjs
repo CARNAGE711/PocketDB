@@ -12,6 +12,6 @@ console.log('bundle MATCH:', [...new Set(m1)].join() === [...new Set(m2)].join()
 console.log('CSP shipped :', asar.includes("default-src 'self'"));
 console.log('passphrase fix in asar:', asar.includes('always re-open with it'));
 
-const exe = 'release/PocketDB Setup 1.1.0.exe';
+const exe = 'release/PocketDB Setup 1.2.0.exe';
 const st = fs.statSync(exe);
 console.log('installer   :', (st.size / 1048576).toFixed(1), 'MB ·', st.mtime.toISOString());

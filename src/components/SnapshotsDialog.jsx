@@ -6,7 +6,7 @@
  * each one. Restoring swaps the live database folder for the snapshot
  * copy (atomic on the engine side, rolling back if the copy fails).
  */
-import { Archive, CopyPlus, Loader2, RotateCcw, Trash2 } from 'lucide-react';
+import { Archive, CalendarClock, CopyPlus, Loader2, RotateCcw, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../lib/api.js';
 import { Banner, Button, Modal } from './ui.jsx';
@@ -18,13 +18,39 @@ export default function SnapshotsDialog({ db, onClose, onRestored }) {
   /* two-step confirm: 'restore:<id>' | 'del:<id>' | null */
   const [confirmId, setConfirmId] = useState(null);
 
+  /* scheduled snapshots (global — applies to every database) */
+  const [schedule, setSchedule] = useState(null);
+  const [schedBusy, setSchedBusy] = useState(false);
+  const [schedNotice, setSchedNotice] = useState(null);
+
   const load = useCallback(() => {
     api.listSnapshots(db).then(setSnaps).catch(() => setSnaps([]));
   }, [db]);
 
   useEffect(() => {
     load();
+    api.getSnapshotSchedule().then(setSchedule).catch(() => {});
   }, [load]);
+
+  const saveSchedule = async (patch) => {
+    const next = { ...(schedule || {}), ...patch };
+    setSchedule(next);
+    setSchedBusy(true);
+    setSchedNotice(null);
+    try {
+      const saved = await api.setSnapshotSchedule({
+        enabled: next.enabled,
+        intervalMinutes: next.intervalMinutes,
+        keep: next.keep,
+      });
+      setSchedule({ ...next, ...saved });
+      setSchedNotice(saved.enabled ? 'Schedule saved — automatic snapshots are on.' : 'Schedule saved — automatic snapshots are off.');
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSchedBusy(false);
+    }
+  };
 
   const create = async () => {
     setBusy(true);
@@ -146,6 +172,74 @@ export default function SnapshotsDialog({ db, onClose, onRestored }) {
           ))}
         </div>
       )}
+
+      {/* scheduled snapshots */}
+      <div className="mt-4 rounded-lg border border-ink-700 bg-ink-900 p-3">
+        <div className="flex items-center gap-2">
+          <CalendarClock size={14} className={schedule?.enabled ? 'text-emerald-300' : 'text-slate-500'} />
+          <span className="text-xs font-medium text-slate-300">Scheduled snapshots</span>
+          <span className="rounded bg-ink-800 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wide text-slate-500">
+            all databases
+          </span>
+          <label className="ml-auto flex cursor-pointer items-center gap-2 font-mono text-[10px] text-slate-400">
+            <input
+              type="checkbox"
+              checked={Boolean(schedule?.enabled)}
+              disabled={!schedule || schedBusy}
+              onChange={(e) => saveSchedule({ enabled: e.target.checked })}
+              className="h-3.5 w-3.5 accent-brand-500"
+            />
+            {schedule?.enabled ? 'on' : 'off'}
+          </label>
+        </div>
+
+        <div className="mt-2.5 flex flex-wrap items-center gap-2 font-mono text-[10px] text-slate-500">
+          <span>every</span>
+          <input
+            type="number"
+            min="1"
+            value={schedule?.intervalMinutes ?? 60}
+            disabled={!schedule || schedBusy}
+            onChange={(e) =>
+              setSchedule((s) => ({ ...s, intervalMinutes: Number(e.target.value) || 1 }))
+            }
+            className="w-16 rounded border border-ink-600 bg-ink-850 px-2 py-1 text-slate-200 outline-none focus:border-brand-500 disabled:opacity-50"
+            aria-label="Interval in minutes"
+          />
+          <span>min · keep newest</span>
+          <input
+            type="number"
+            min="1"
+            value={schedule?.keep ?? 5}
+            disabled={!schedule || schedBusy}
+            onChange={(e) => setSchedule((s) => ({ ...s, keep: Number(e.target.value) || 1 }))}
+            className="w-14 rounded border border-ink-600 bg-ink-850 px-2 py-1 text-slate-200 outline-none focus:border-brand-500 disabled:opacity-50"
+            aria-label="Snapshots to keep"
+          />
+          <span>per database</span>
+          <Button
+            variant="subtle"
+            className="ml-auto !px-2 !py-1 !text-[10px]"
+            disabled={!schedule || schedBusy}
+            onClick={() => saveSchedule({})}
+          >
+            {schedBusy ? <Loader2 size={10} className="animate-spin" /> : null} Save schedule
+          </Button>
+        </div>
+
+        {schedNotice && <p className="mt-2 font-mono text-[10px] text-emerald-400">{schedNotice}</p>}
+        {schedule?.enabled && schedule?.nextRun && (
+          <p className="mt-2 font-mono text-[10px] text-slate-600">
+            next run ≈ {new Date(schedule.nextRun).toLocaleString()} · snapshots are pruned to the newest{' '}
+            {schedule.keep} per database.
+          </p>
+        )}
+        {!schedule?.enabled && (
+          <p className="mt-2 text-[10px] text-slate-600">
+            When on, PocketDB snapshots every database in this data directory on the interval and prunes older ones.
+          </p>
+        )}
+      </div>
 
       <p className="mt-3 text-[11px] leading-relaxed text-slate-600">
         Snapshots live in <span className="font-mono text-slate-500">pocketdb-snapshots/{db}/&lt;timestamp&gt;/</span>{' '}

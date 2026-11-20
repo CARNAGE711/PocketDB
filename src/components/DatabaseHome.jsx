@@ -8,7 +8,7 @@
  * surface without duplicating them here.
  */
 import {
-  FileText, Folder, FolderOpen, HardDrive, Image as ImageIcon, Layers, Plus, Star, Trash2,
+  Eye, FileText, Folder, FolderOpen, HardDrive, Image as ImageIcon, Layers, Plus, Star, Trash2,
 } from 'lucide-react';
 import { formatBytes } from '../lib/utils.js';
 import { Button, IconButton } from './ui.jsx';
@@ -28,8 +28,9 @@ export default function DatabaseHome({
   db, filesCount, dataDir,
   onOpenColl, onInsertDoc, onDropColl, onNewColl, onDropDb,
 }) {
-  const totalDocs = db.collections.reduce((sum, c) => sum + c.count, 0);
-  const totalSize = db.collections.reduce((sum, c) => sum + c.size, 0);
+  const totalDocs = db.collections.reduce((sum, c) => sum + (c.view ? 0 : c.count || 0), 0);
+  const totalSize = db.collections.reduce((sum, c) => sum + (c.view ? 0 : c.size || 0), 0);
+  const viewCount = db.collections.filter((c) => c.view).length;
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
@@ -76,7 +77,12 @@ export default function DatabaseHome({
 
         {/* collection cards */}
         <h2 className="mt-9 flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-wider text-slate-500">
-          <FolderOpen size={12} /> Collections · {db.collections.length}
+          <FolderOpen size={12} /> Collections · {db.collections.length - viewCount}
+          {viewCount > 0 && (
+            <span className="flex items-center gap-1 text-indigo-400">
+              · <Eye size={10} /> {viewCount} view(s)
+            </span>
+          )}
         </h2>
         <div className="mt-3 grid grid-cols-[repeat(auto-fill,minmax(230px,1fr))] gap-3">
           {db.collections.map((c) => (
@@ -85,30 +91,46 @@ export default function DatabaseHome({
               className="group rounded-lg border border-ink-700 bg-ink-900 p-4 transition-colors hover:border-ink-600"
             >
               <button onClick={() => onOpenColl(c.name)} className="flex w-full items-center gap-3 text-left">
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-ink-800 text-slate-500 transition-colors group-hover:text-brand-300">
-                  <Folder size={16} />
+                <span
+                  className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-ink-800 transition-colors group-hover:text-brand-300 ${
+                    c.view ? 'text-indigo-400' : 'text-slate-500'
+                  }`}
+                >
+                  {c.view ? <Eye size={16} /> : <Folder size={16} />}
                 </span>
                 <span className="min-w-0">
-                  <span className="block truncate text-sm font-medium text-slate-200">{c.name}</span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="block truncate text-sm font-medium text-slate-200">{c.name}</span>
+                    {c.view && (
+                      <span
+                        className="shrink-0 rounded bg-indigo-500/15 px-1.5 py-0.5 font-mono text-[9px] text-indigo-300"
+                        title={`Read-only view of "${c.source}"`}
+                      >
+                        view
+                      </span>
+                    )}
+                  </span>
                   <span className="block font-mono text-[10px] text-slate-600">
-                    {c.count} docs · {formatBytes(c.size)}
+                    {c.count === null ? '—' : c.count} docs · {c.view ? `of ${c.source}` : formatBytes(c.size)}
                   </span>
                 </span>
               </button>
               <div className="mt-2 flex items-center justify-end gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-                <button
-                  onClick={() => onInsertDoc(c.name)}
-                  title="Insert document"
-                  className="rounded p-1.5 text-slate-500 hover:bg-ink-700 hover:text-slate-200"
-                  aria-label="Insert document"
-                >
-                  <Plus size={13} />
-                </button>
+                {!c.view && (
+                  <button
+                    onClick={() => onInsertDoc(c.name)}
+                    title="Insert document"
+                    className="rounded p-1.5 text-slate-500 hover:bg-ink-700 hover:text-slate-200"
+                    aria-label="Insert document"
+                  >
+                    <Plus size={13} />
+                  </button>
+                )}
                 <button
                   onClick={() => onDropColl(c.name)}
-                  title="Drop collection"
+                  title={c.view ? 'Delete view' : 'Drop collection'}
                   className="rounded p-1.5 text-slate-500 hover:bg-ink-700 hover:text-rose-400"
-                  aria-label="Drop collection"
+                  aria-label={c.view ? 'Delete view' : 'Drop collection'}
                 >
                   <Trash2 size={13} />
                 </button>

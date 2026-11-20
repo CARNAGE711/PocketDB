@@ -5,7 +5,9 @@
  * of each stage feeds the next, drawn with arrows). The selected stage's
  * spec opens in the editor panel; results render underneath in any view.
  */
-import { ArrowDown, ArrowUp, BarChart3, Braces, ListTree, Play, Plus, Table, Trash2 } from 'lucide-react';
+import {
+  ArrowDown, ArrowUp, BarChart3, BookmarkPlus, Braces, Eye, ListTree, Play, Plus, Table, Trash2,
+} from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api.js';
 import { tryParseJson } from '../lib/utils.js';
@@ -32,7 +34,7 @@ function newStage(type = '$match') {
   return { id: `stage-${++stageSeq}`, type, text: STAGE_TEMPLATES[type] };
 }
 
-export default function PipelineStudio({ db, coll, onChart }) {
+export default function PipelineStudio({ db, coll, isView = false, onChart, onViewSaved }) {
   const [stages, setStages] = useState([newStage('$match')]);
   const [selectedId, setSelectedId] = useState(stages[0].id);
   const [results, setResults] = useState(null);
@@ -40,6 +42,10 @@ export default function PipelineStudio({ db, coll, onChart }) {
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
   const [addMenu, setAddMenu] = useState(false);
+  const [namingView, setNamingView] = useState(false);
+  const [viewName, setViewName] = useState('');
+  const [viewNotice, setViewNotice] = useState(null);
+  const [viewBusy, setViewBusy] = useState(false);
   const addRef = useRef(null);
 
   const selected = stages.find((s) => s.id === selectedId) || stages[0];
@@ -129,18 +135,56 @@ export default function PipelineStudio({ db, coll, onChart }) {
     }
   };
 
+  /** Persist the current pipeline as a read-only virtual collection. */
+  const saveAsView = async () => {
+    setError(null);
+    let pipeline;
+    try {
+      pipeline = buildPipeline();
+    } catch (err) {
+      setError(err.message);
+      return;
+    }
+    setViewBusy(true);
+    try {
+      const view = await api.saveView(db, { name: viewName.trim(), coll, pipeline });
+      setViewNotice(`Saved view "${view.name}" — it now appears as a read-only collection.`);
+      setNamingView(false);
+      setViewName('');
+      onViewSaved?.(view);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setViewBusy(false);
+    }
+  };
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {/* stage rail */}
       <div className="shrink-0 border-b border-ink-700 bg-ink-900 px-4 py-3">
         <div className="mb-2.5 flex items-center justify-between">
-          <h3 className="font-mono text-[10px] uppercase tracking-wider text-slate-500">
+          <h3 className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wider text-slate-500">
             pipeline <span className="text-slate-700">//</span>{' '}
             <span className="normal-case text-slate-400">
               {db} › {coll}
             </span>
+            {isView && (
+              <span className="flex items-center gap-1 rounded-full bg-indigo-500/15 px-1.5 py-0.5 text-[9px] normal-case text-indigo-300">
+                <Eye size={9} /> view
+              </span>
+            )}
           </h3>
           <div className="flex items-center gap-2">
+            {!isView && (
+              <Button
+                variant="ghost"
+                onClick={() => { setNamingView((v) => !v); setViewNotice(null); }}
+                title="Save this pipeline as a read-only virtual collection"
+              >
+                <BookmarkPlus size={13} /> Save as view
+              </Button>
+            )}
             {onChart && (
               <Button variant="ghost" onClick={chartResults} title="Plot these results as bars / donut">
                 <BarChart3 size={13} /> Chart results
@@ -151,6 +195,33 @@ export default function PipelineStudio({ db, coll, onChart }) {
             </Button>
           </div>
         </div>
+
+        {namingView && (
+          <div className="mb-2 flex items-center gap-2 rounded-md border border-brand-500/30 bg-brand-950/20 px-2 py-1.5">
+            <span className="shrink-0 font-mono text-[10px] uppercase tracking-wider text-slate-500">view name</span>
+            <input
+              autoFocus
+              value={viewName}
+              onChange={(e) => setViewName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && viewName.trim()) saveAsView();
+                if (e.key === 'Escape') setNamingView(false);
+              }}
+              placeholder="active-users"
+              className="min-w-0 flex-1 rounded border border-ink-600 bg-ink-900 px-2 py-1 font-mono text-xs text-slate-100 outline-none placeholder:text-slate-600 focus:border-brand-500"
+            />
+            <Button variant="primary" onClick={saveAsView} disabled={!viewName.trim() || viewBusy}>
+              {viewBusy ? 'Saving…' : 'Save view'}
+            </Button>
+            <Button variant="ghost" onClick={() => setNamingView(false)}>Cancel</Button>
+          </div>
+        )}
+
+        {viewNotice && (
+          <div className="mb-2">
+            <Banner kind="ok" onClose={() => setViewNotice(null)}>{viewNotice}</Banner>
+          </div>
+        )}
 
         <div className="flex items-center gap-0.5 overflow-x-auto pb-1">
           {stages.map((stage, i) => {

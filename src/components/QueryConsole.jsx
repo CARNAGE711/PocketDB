@@ -8,11 +8,25 @@
  * load a persisted filter from the dropdown, or save the current filter
  * with a name (stored per collection).
  */
-import { Bookmark, ChevronDown, ChevronRight, Play, RotateCcw, Trash2, Wand2 } from 'lucide-react';
+import {
+  Bookmark, ChevronDown, ChevronRight, Gauge, ListChecks, Play, RotateCcw, Trash2, Wand2, Zap,
+} from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import { api } from '../lib/api.js';
 import MonacoJsonEditor from './MonacoJsonEditor.jsx';
 import QueryBuilder from './QueryBuilder.jsx';
-import { Button, IconButton, Segmented } from './ui.jsx';
+import { Banner, Button, IconButton, Segmented } from './ui.jsx';
+
+/** One-line summary of an explain stage. */
+function stageDetail(stage) {
+  if (stage.stage === 'IXSCAN') return `${stage.index} · ${stage.keys} key(s)`;
+  if (stage.stage === 'COLLSCAN') return `${stage.examined} doc(s)`;
+  if (stage.stage === 'FETCH') return `${stage.examined} doc(s)`;
+  if (stage.stage === 'MATCH') return `${stage.matched} match(es)`;
+  if (stage.stage === 'SORT') return `in memory${stage.fields ? ` · ${stage.fields.join(', ')}` : ''}`;
+  if (stage.stage === 'VIEW') return `${stage.pipelineStages} stage(s)`;
+  return '';
+}
 
 function SavedMenu({ queries, onPick, onDelete }) {
   const [open, setOpen] = useState(false);
@@ -62,18 +76,44 @@ function SavedMenu({ queries, onPick, onDelete }) {
 }
 
 export default function QueryConsole({
-  queryText, onQueryText, onRun, onClear, matched, loaded, error,
+  db, coll, queryText, onQueryText, onRun, onClear, matched, loaded, error,
   savedQueries = [], onSaveQuery, onDeleteQuery, onPickQuery,
 }) {
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState('json'); // 'json' | 'builder'
   const [naming, setNaming] = useState(false);
   const [nameVal, setNameVal] = useState('');
+  const [plan, setPlan] = useState(null);
+  const [planError, setPlanError] = useState(null);
+  const [planBusy, setPlanBusy] = useState(false);
 
   // Surface errors automatically so they are never hidden in the strip.
   useEffect(() => {
     if (error) setOpen(true);
   }, [error]);
+
+  // A plan describes one specific filter — drop it when the filter changes.
+  useEffect(() => {
+    setPlan(null);
+    setPlanError(null);
+  }, [queryText]);
+
+  const runExplain = async () => {
+    setPlanError(null);
+    setPlanBusy(true);
+    try {
+      const filter = JSON.parse(queryText || '{}');
+      if (filter === null || typeof filter !== 'object' || Array.isArray(filter)) {
+        throw new Error('Filter must be a JSON object.');
+      }
+      setPlan(await api.explain(db, coll, filter));
+    } catch (e) {
+      setPlan(null);
+      setPlanError(e.message);
+    } finally {
+      setPlanBusy(false);
+    }
+  };
 
   const submitName = async () => {
     const name = nameVal.trim();
@@ -175,10 +215,86 @@ export default function QueryConsole({
                 <Button variant="ghost" onClick={onClear} title="Reset filter">
                   <RotateCcw size={13} /> Clear
                 </Button>
+                <Button
+                  variant="subtle"
+                  onClick={runExplain}
+                  disabled={planBusy || !db || !coll}
+                  title="Show how this filter is executed — index scan vs full scan, docs examined, timing"
+                >
+                  <Gauge size={13} /> {planBusy ? 'Explaining…' : 'Explain'}
+                </Button>
                 <Button variant="primary" onClick={onRun}>
                   <Play size={13} /> Run
                 </Button>
               </div>
+
+              {planError && (
+                <div className="mt-2">
+                  <Banner onClose={() => setPlanError(null)}>{planError}</Banner>
+                </div>
+              )}
+
+              {plan && (
+                <div className="mt-2 rounded-lg border border-ink-700 bg-ink-950/60 p-2.5">
+                  <div className="flex flex-wrap items-center gap-2 font-mono text-[10px]">
+                    <span className="flex items-center gap-1 uppercase tracking-wider text-slate-500">
+                      <ListChecks size={11} /> plan
+                    </span>
+                    <span
+                      className={`flex items-center gap-1 rounded px-1.5 py-0.5 uppercase tracking-wide ${
+                        plan.indexUsed
+                          ? 'bg-emerald-500/15 text-emerald-300'
+                          : 'bg-amber-500/15 text-amber-300'
+                      }`}
+                    >
+                      <Zap size={9} /> {plan.indexUsed ? 'index scan' : 'full scan'}
+                    </span>
+                    {plan.view && (
+                      <span className="rounded bg-indigo-500/15 px-1.5 py-0.5 text-indigo-300">
+                        view of {plan.source}
+                      </span>
+                    )}
+                    <span className="text-slate-500">
+                      scanned <span className="text-slate-200">{plan.scanned ?? '—'}</span>
+                      {plan.documents !== null && plan.documents !== undefined && (
+                        <> / {plan.documents} total</>
+                      )}
+                    </span>
+                    <span className="text-slate-500">
+                      matched <span className="text-brand-300">{plan.matched}</span>
+                    </span>
+                    <span className="ml-auto text-slate-500">
+                      <span className="text-slate-200">{plan.timeMs} ms</span>
+                    </span>
+                  </div>
+                  <div className="mt-2 flex flex-wrap items-center gap-1">
+                    {plan.plan.map((stage, i) => (
+                      <span key={`${stage.stage}-${i}`} className="flex items-center gap-1">
+                        {i > 0 && <span className="font-mono text-[10px] text-slate-700">→</span>}
+                        <span
+                          className={`rounded border px-1.5 py-0.5 font-mono text-[9px] ${
+                            stage.stage === 'IXSCAN'
+                              ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+                              : stage.stage === 'COLLSCAN'
+                                ? 'border-amber-500/30 bg-amber-500/10 text-amber-300'
+                                : 'border-ink-700 bg-ink-900 text-slate-400'
+                          }`}
+                          title={stageDetail(stage)}
+                        >
+                          {stage.stage}
+                          {stageDetail(stage) ? <span className="text-slate-600"> · {stageDetail(stage)}</span> : null}
+                        </span>
+                      </span>
+                    ))}
+                  </div>
+                  <p className="mt-1.5 font-mono text-[9px] text-slate-600">
+                    {plan.indexUsed
+                      ? `index on ${plan.indexUsed.field} narrowed ${plan.documents} docs to ${plan.indexUsed.candidates} candidates`
+                      : 'no usable index — every document in the collection file is examined'}
+                    {plan.sort ? ' · sorting happens in memory' : ''}
+                  </p>
+                </div>
+              )}
             </>
           ) : (
             <QueryBuilder

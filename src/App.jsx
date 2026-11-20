@@ -20,12 +20,13 @@
  */
 import {
   Activity, Archive, Bookmark, BookOpen, Braces, CheckSquare, ChevronDown, Command, Database, Download,
-  FileUp, FolderOpen, FolderPlus, HardDrive, Image as ImageIcon, Keyboard,
+  Eye, FileUp, FolderOpen, FolderPlus, HardDrive, Image as ImageIcon, Keyboard,
   KeyRound, LayoutDashboard, ListTree, LogOut, Pencil, Play, Plus, RefreshCw,
-  Server, Shield, Sparkles, Table, Trash2, Workflow,
+  ScanSearch, Server, Shield, Sparkles, Table, Terminal, Trash2, Undo2, Workflow, X,
 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from './lib/api.js';
+import ActivityFeed from './components/ActivityFeed.jsx';
 import ChartsStudio from './components/ChartsStudio.jsx';
 import CommandBar from './components/CommandBar.jsx';
 import CommandPalette from './components/CommandPalette.jsx';
@@ -38,16 +39,19 @@ import HistoryDialog from './components/HistoryDialog.jsx';
 import ImportDialog from './components/ImportDialog.jsx';
 import IndexManagerDialog from './components/IndexManagerDialog.jsx';
 import Launchpad from './components/Launchpad.jsx';
+import McpDialog from './components/McpDialog.jsx';
 import MongoImportDialog from './components/MongoImportDialog.jsx';
 import NewDatabaseDialog from './components/NewDatabaseDialog.jsx';
 import Pager from './components/Pager.jsx';
 import PipelineStudio from './components/PipelineStudio.jsx';
 import QueryConsole from './components/QueryConsole.jsx';
+import SchemaAnalyzerDialog from './components/SchemaAnalyzerDialog.jsx';
 import SchemaDialog from './components/SchemaDialog.jsx';
 import ServerDialog from './components/ServerDialog.jsx';
 import ShortcutsDialog from './components/ShortcutsDialog.jsx';
 import SnapshotsDialog from './components/SnapshotsDialog.jsx';
 import TourOverlay from './components/TourOverlay.jsx';
+import TrashDialog from './components/TrashDialog.jsx';
 import { Banner, Button, ConfirmDialog, IconButton, Modal, PromptDialog, Segmented } from './components/ui.jsx';
 
 const NAME_PATTERN = /^[\w-]{1,64}$/;
@@ -164,6 +168,21 @@ export default function App() {
   const [recentColls, setRecentColls] = useState(() => {
     try { return JSON.parse(window.localStorage.getItem('pocketdb-recent-colls') || '[]'); } catch { return []; }
   });
+
+  /* open collection tabs (per database, persisted across launches) */
+  const [openTabs, setOpenTabs] = useState(() => {
+    try {
+      const raw = JSON.parse(window.localStorage.getItem('pocketdb-open-tabs') || '[]');
+      return Array.isArray(raw) ? raw.filter((t) => t && t.db && t.coll) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const rememberTabs = useCallback((next) => {
+    try { window.localStorage.setItem('pocketdb-open-tabs', JSON.stringify(next)); } catch { /* private mode */ }
+    return next;
+  }, []);
 
   const togglePinColl = useCallback((db, coll) => {
     setPinnedColls((prev) => {
@@ -319,7 +338,7 @@ export default function App() {
     setSelectMode(false);
   }, []);
 
-  /** Open a collection → the data surface. */
+  /** Open a collection → the data surface (and keep it as an open tab). */
   const openColl = useCallback((name) => {
     setActiveColl(name);
     setSurface('coll');
@@ -329,7 +348,30 @@ export default function App() {
     setSelection(new Set());
     setSelectMode(false);
     recordRecentColl(activeDb, name);
-  }, [activeDb, recordRecentColl]);
+    if (activeDb) {
+      setOpenTabs((prev) => {
+        const next = [
+          ...prev.filter((t) => !(t.db === activeDb && t.coll === name)),
+          { db: activeDb, coll: name },
+        ].slice(-12);
+        return rememberTabs(next);
+      });
+    }
+  }, [activeDb, recordRecentColl, rememberTabs]);
+
+  /** Close a collection tab; the neighbour becomes active when needed. */
+  const closeTab = useCallback((tab) => {
+    setOpenTabs((prev) => rememberTabs(prev.filter((t) => !(t.db === tab.db && t.coll === tab.coll))));
+    if (activeDb === tab.db && activeColl === tab.coll) {
+      const neighbour = openTabs.filter((t) => t.db === tab.db && t.coll !== tab.coll).pop();
+      if (neighbour) {
+        openColl(neighbour.coll);
+      } else {
+        setActiveColl(null);
+        setSurface('home');
+      }
+    }
+  }, [activeDb, activeColl, openTabs, openColl, rememberTabs]);
 
   /* push every location change onto the history stack (the previous
      location, so ← can restore it); skipped when ← itself navigates */
@@ -416,6 +458,14 @@ export default function App() {
       setActiveColl(null); // collection was dropped
       setSurface('home');
     }
+    // Drop tabs whose database/collection no longer exists.
+    setOpenTabs((prev) => {
+      const next = prev.filter((t) => {
+        const d = list.find((x) => x.name === t.db);
+        return d && d.collections.some((c) => c.name === t.coll);
+      });
+      return next.length === prev.length ? prev : rememberTabs(next);
+    });
     await loadFilesCount(activeDb);
     if (activeDb && activeColl && surface === 'coll') {
       const res = await loadDocs(activeDb, activeColl, { skip: page * pageSize, limit: pageSize });
@@ -585,6 +635,20 @@ export default function App() {
     }
   };
 
+  /** Drop confirmation that knows whether the target is a collection or a view. */
+  const confirmDropColl = (db, coll) => {
+    const target = databases
+      .find((d) => d.name === db)
+      ?.collections.find((c) => c.name === coll);
+    setConfirmState({
+      kind: 'drop-coll', db, coll,
+      title: target?.view ? 'Delete saved view' : 'Drop collection',
+      message: target?.view
+        ? `Delete the view "${coll}" from "${db}"? The source collection "${target.source}" and its documents are untouched.`
+        : `Drop collection "${coll}" from "${db}"? All documents in it will be deleted (they stay restorable in the trash).`,
+    });
+  };
+
   const runConfirmed = async () => {
     const action = confirmState;
     setConfirmState(null);
@@ -593,8 +657,11 @@ export default function App() {
         await api.dropDatabase(action.db);
         setBanner({ kind: 'ok', text: `Database "${action.db}" dropped.` });
       } else if (action.kind === 'drop-coll') {
-        await api.dropCollection(action.db, action.coll);
-        setBanner({ kind: 'ok', text: `Collection "${action.coll}" dropped.` });
+        const res = await api.dropCollection(action.db, action.coll);
+        setBanner({
+          kind: 'ok',
+          text: res?.view ? `View "${action.coll}" deleted.` : `Collection "${action.coll}" dropped.`,
+        });
       } else if (action.kind === 'delete-doc') {
         await api.deleteOne(action.db, action.coll, action.doc._id);
         setBanner({ kind: 'ok', text: 'Document deleted.' });
@@ -673,7 +740,7 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [connState]);
 
-  /* Alt+1..4 — jump straight to a surface (guarded by what exists) */
+  /* Alt+1..7 — jump straight to a surface or tool (guarded by what exists) */
   useEffect(() => {
     if (!connState) return undefined;
     const onKey = (e) => {
@@ -683,6 +750,9 @@ export default function App() {
         2: () => activeColl && setSurface('coll'),
         3: () => activeColl && setSurface('pipeline'),
         4: () => activeDb && setSurface('files'),
+        5: () => setDialog({ kind: 'activity' }),
+        6: () => activeDb && setDialog({ kind: 'trash' }),
+        7: () => activeColl && setDialog({ kind: 'analyze' }),
       };
       const jump = jumps[e.key];
       if (jump) {
@@ -717,6 +787,8 @@ export default function App() {
   const activeCollStats = dbObj?.collections.find((c) => c.name === activeColl);
   const hasDb = Boolean(activeDb);
   const hasColl = Boolean(activeDb && activeColl);
+  const isView = Boolean(activeCollStats?.view);
+  const tabsForDb = openTabs.filter((t) => t.db === activeDb);
 
   /* command-palette items (context-aware) */
   const paletteItems = [
@@ -758,11 +830,11 @@ export default function App() {
       id: 'act:new-coll', group: 'Actions', icon: Plus,
       label: 'New collection', run: () => setDialog({ kind: 'new-coll', db: activeDb }),
     },
-    hasColl && {
+    hasColl && !isView && {
       id: 'act:insert', group: 'Actions', icon: Plus,
       label: 'Insert document', run: () => setDialog({ kind: 'insert' }),
     },
-    hasColl && {
+    hasColl && !isView && {
       id: 'act:import', group: 'Actions', icon: FileUp,
       label: 'Import documents into this collection', run: () => setDialog({ kind: 'import', coll: activeColl }),
     },
@@ -782,18 +854,34 @@ export default function App() {
       id: 'act:export-csv', group: 'Actions', icon: Download,
       label: 'Export collection as CSV', run: () => doExport('csv'),
     },
-    hasColl && {
+    hasColl && !isView && {
       id: 'act:select', group: 'Actions', icon: CheckSquare,
       label: selectMode ? 'Exit bulk selection' : 'Bulk-select documents',
       run: () => setSelectMode((v) => !v),
     },
-    hasColl && {
+    hasColl && !isView && {
       id: 'act:indexes', group: 'Actions', icon: KeyRound,
       label: 'Indexes', run: () => setDialog({ kind: 'indexes' }),
     },
-    hasColl && {
+    hasColl && !isView && {
       id: 'act:schema', group: 'Actions', icon: Shield,
       label: 'Schema validation rules', run: () => setDialog({ kind: 'schema' }),
+    },
+    hasColl && {
+      id: 'act:schema-analyzer', group: 'Actions', icon: ScanSearch,
+      label: 'Schema analyzer — field distribution', run: () => setDialog({ kind: 'analyze' }),
+    },
+    hasDb && {
+      id: 'act:trash', group: 'Actions', icon: Undo2,
+      label: 'Trash — restore deleted documents', run: () => setDialog({ kind: 'trash' }),
+    },
+    hasDb && {
+      id: 'act:activity', group: 'Actions', icon: Activity,
+      label: 'Activity feed — live engine events', run: () => setDialog({ kind: 'activity' }),
+    },
+    hasDb && {
+      id: 'act:mcp', group: 'Actions', icon: Terminal,
+      label: 'MCP server — connect an AI client', run: () => setDialog({ kind: 'mcp' }),
     },
     hasColl && {
       id: 'act:view-grid', group: 'View', icon: Table,
@@ -858,13 +946,7 @@ export default function App() {
             message: `Drop database "${db}" and all of its collections? This permanently deletes the files on disk.`,
           })
         }
-        onDropColl={(db, coll) =>
-          setConfirmState({
-            kind: 'drop-coll', db, coll,
-            title: 'Drop collection',
-            message: `Drop collection "${coll}" from "${db}"? All documents in it will be deleted.`,
-          })
-        }
+        onDropColl={confirmDropColl}
         onBack={goBack}
         canGoBack={canGoBack}
         backTitle={canGoBack ? 'Back' : 'Nothing to go back to'}
@@ -878,10 +960,64 @@ export default function App() {
         }
         onImportMongo={() => setDialog({ kind: 'mongo' })}
         onSnapshots={() => hasDb && setDialog({ kind: 'snapshots' })}
+        onActivity={() => setDialog({ kind: 'activity' })}
+        onTrash={() => hasDb && setDialog({ kind: 'trash' })}
         pinnedColls={[...pinnedColls]}
         onTogglePin={togglePinColl}
         recentColls={recentColls}
       />
+
+      {/* open collection tabs (per database) */}
+      {hasDb && surface !== 'files' && tabsForDb.length > 0 && (
+        <div className="flex shrink-0 items-center gap-1 overflow-x-auto border-b border-ink-700 bg-ink-950 px-3 py-1">
+          {tabsForDb.map((tab) => {
+            const stats = dbObj?.collections.find((c) => c.name === tab.coll);
+            const active = activeColl === tab.coll && surface !== 'home';
+            return (
+              <div
+                key={`${tab.db}/${tab.coll}`}
+                className={`group flex shrink-0 items-center gap-1 rounded-md border px-1.5 py-0.5 transition-colors ${
+                  active
+                    ? 'border-brand-500/50 bg-ink-800 text-slate-100'
+                    : 'border-transparent text-slate-500 hover:bg-ink-900 hover:text-slate-300'
+                }`}
+              >
+                <button
+                  onClick={() => openColl(tab.coll)}
+                  className="flex min-w-0 items-center gap-1.5 py-0.5 text-xs"
+                  title={stats?.view ? `Read-only view of "${stats.source}"` : `Open ${tab.coll}`}
+                >
+                  {stats?.view ? (
+                    <Eye size={11} className="shrink-0 text-indigo-400" />
+                  ) : (
+                    <FolderOpen size={11} className={`shrink-0 ${active ? 'text-brand-400' : 'text-slate-600'}`} />
+                  )}
+                  <span className="max-w-[11rem] truncate">{tab.coll}</span>
+                  {stats?.count !== null && stats?.count !== undefined && (
+                    <span className="shrink-0 font-mono text-[9px] text-slate-600">{stats.count}</span>
+                  )}
+                </button>
+                <button
+                  onClick={() => closeTab(tab)}
+                  title={`Close ${tab.coll}`}
+                  aria-label={`Close ${tab.coll}`}
+                  className="rounded p-0.5 text-slate-600 opacity-0 transition-opacity hover:bg-ink-700 hover:text-slate-200 group-hover:opacity-100"
+                >
+                  <X size={10} />
+                </button>
+              </div>
+            );
+          })}
+          <button
+            onClick={() => setDialog({ kind: 'new-coll', db: activeDb })}
+            title="New collection"
+            aria-label="New collection"
+            className="ml-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded text-slate-600 hover:bg-ink-800 hover:text-brand-300"
+          >
+            <Plus size={12} />
+          </button>
+        </div>
+      )}
 
       {/* content */}
       <main className="flex min-h-0 flex-1 flex-col bg-ink-950">
@@ -914,13 +1050,7 @@ export default function App() {
             dataDir={connState.info.dataDir}
             onOpenColl={openColl}
             onNewColl={() => setDialog({ kind: 'new-coll', db: activeDb })}
-            onDropColl={(coll) =>
-              setConfirmState({
-                kind: 'drop-coll', db: activeDb, coll,
-                title: 'Drop collection',
-                message: `Drop collection "${coll}" from "${activeDb}"? All documents in it will be deleted.`,
-              })
-            }
+            onDropColl={(coll) => confirmDropColl(activeDb, coll)}
             onInsertDoc={(coll) => setDialog({ kind: 'insert', db: activeDb, coll })}
             onDropDb={() =>
               setConfirmState({
@@ -935,9 +1065,14 @@ export default function App() {
             key={`${activeDb}/${activeColl}`}
             db={activeDb}
             coll={activeColl}
+            isView={isView}
             onChart={(pipeline) => {
               setPipelineSpec(pipeline);
               setSurface('charts');
+            }}
+            onViewSaved={async (view) => {
+              await loadDatabases();
+              setBanner({ kind: 'ok', text: `Saved view "${view.name}" — open it from the collection switcher.` });
             }}
           />
         ) : surface === 'charts' ? (
@@ -954,9 +1089,18 @@ export default function App() {
               <div className="flex min-w-0 items-center gap-2.5">
                 <span className="shrink-0 font-mono text-[10px] uppercase tracking-wider text-slate-500">collection</span>
                 <span className="truncate text-sm font-medium text-slate-100">{activeColl}</span>
-                <span className="shrink-0 rounded-full bg-ink-800 px-2 py-0.5 font-mono text-[10px] text-slate-400">
-                  {activeCollStats?.count ?? matched ?? 0} docs
-                </span>
+                {isView ? (
+                  <span
+                    className="flex shrink-0 items-center gap-1 rounded-full bg-indigo-500/15 px-2 py-0.5 font-mono text-[10px] text-indigo-300"
+                    title={`Read-only view of "${activeCollStats?.source}" — edit the source collection instead`}
+                  >
+                    <Eye size={10} /> view of {activeCollStats?.source}
+                  </span>
+                ) : (
+                  <span className="shrink-0 rounded-full bg-ink-800 px-2 py-0.5 font-mono text-[10px] text-slate-400">
+                    {activeCollStats?.count ?? matched ?? 0} docs
+                  </span>
+                )}
               </div>
               <div className="flex shrink-0 items-center gap-2">
                 <Segmented
@@ -969,34 +1113,45 @@ export default function App() {
                   ]}
                 />
                 <span className="mx-1 h-5 w-px bg-ink-700" />
+                {!isView && (
+                  <>
+                    <IconButton
+                      onClick={() => setSelectMode((v) => !v)}
+                      title={selectMode ? 'Exit bulk selection' : 'Bulk-select documents'}
+                      aria-label="Toggle bulk selection"
+                      className={selectMode ? 'bg-ink-700 text-brand-300' : ''}
+                    >
+                      <CheckSquare size={14} />
+                    </IconButton>
+                    <IconButton
+                      onClick={() => setDialog({ kind: 'indexes' })}
+                      title="Indexes (faster equality / $in lookups)"
+                      aria-label="Manage indexes"
+                    >
+                      <KeyRound size={14} />
+                    </IconButton>
+                    <IconButton
+                      onClick={() => setDialog({ kind: 'schema' })}
+                      title="Schema validation rules"
+                      aria-label="Schema validation"
+                    >
+                      <Shield size={14} />
+                    </IconButton>
+                    <IconButton
+                      onClick={() => setDialog({ kind: 'import', coll: activeColl })}
+                      title="Import documents (JSON / NDJSON / CSV)"
+                      aria-label="Import documents"
+                    >
+                      <FileUp size={14} />
+                    </IconButton>
+                  </>
+                )}
                 <IconButton
-                  onClick={() => setSelectMode((v) => !v)}
-                  title={selectMode ? 'Exit bulk selection' : 'Bulk-select documents'}
-                  aria-label="Toggle bulk selection"
-                  className={selectMode ? 'bg-ink-700 text-brand-300' : ''}
+                  onClick={() => setDialog({ kind: 'analyze' })}
+                  title="Schema analyzer — field distribution across documents"
+                  aria-label="Schema analyzer"
                 >
-                  <CheckSquare size={14} />
-                </IconButton>
-                <IconButton
-                  onClick={() => setDialog({ kind: 'indexes' })}
-                  title="Indexes (faster equality / $in lookups)"
-                  aria-label="Manage indexes"
-                >
-                  <KeyRound size={14} />
-                </IconButton>
-                <IconButton
-                  onClick={() => setDialog({ kind: 'schema' })}
-                  title="Schema validation rules"
-                  aria-label="Schema validation"
-                >
-                  <Shield size={14} />
-                </IconButton>
-                <IconButton
-                  onClick={() => setDialog({ kind: 'import', coll: activeColl })}
-                  title="Import documents (JSON / NDJSON / CSV)"
-                  aria-label="Import documents"
-                >
-                  <FileUp size={14} />
+                  <ScanSearch size={14} />
                 </IconButton>
                 <span className="mx-1 h-5 w-px bg-ink-700" />
                 {/* export dropdown */}
@@ -1025,9 +1180,11 @@ export default function App() {
                 <Button variant="ghost" onClick={() => setSurface('pipeline')}>
                   <Workflow size={14} /> Pipeline
                 </Button>
-                <Button variant="primary" onClick={() => setDialog({ kind: 'insert' })}>
-                  <Plus size={14} /> Insert
-                </Button>
+                {!isView && (
+                  <Button variant="primary" onClick={() => setDialog({ kind: 'insert' })}>
+                    <Plus size={14} /> Insert
+                  </Button>
+                )}
               </div>
             </div>
 
@@ -1038,20 +1195,21 @@ export default function App() {
                 onEdit={(doc) => setDialog({ kind: 'edit', doc })}
                 onDuplicate={duplicateDoc}
                 onHistory={(doc) => setDialog({ kind: 'history', docId: doc._id })}
-                selection={selectMode ? selection : null}
+                selection={!isView && selectMode ? selection : null}
                 onToggleSelect={toggleSelect}
                 onCellEdit={handleCellEdit}
+                readOnly={isView}
                 onDelete={(doc) =>
                   setConfirmState({
                     kind: 'delete-doc', db: activeDb, coll: activeColl, doc,
                     title: 'Delete document',
-                    message: `Delete document ${doc._id}? Its pre-image is kept in the history log.`,
+                    message: `Delete document ${doc._id}? Its pre-image is kept in the history log and the document can be restored from the trash.`,
                   })
                 }
               />
 
               {/* floating bulk bar */}
-              {selectMode && selection.size > 0 && (
+              {!isView && selectMode && selection.size > 0 && (
                 <div className="flex shrink-0 items-center gap-3 border-t border-brand-500/30 bg-brand-950/20 px-4 py-2">
                   <span className="font-mono text-xs text-brand-300">{selection.size} selected</span>
                   <Button variant="danger" onClick={bulkDelete}>
@@ -1074,6 +1232,8 @@ export default function App() {
                 onPageSize={changePageSize}
               />
               <QueryConsole
+                db={activeDb}
+                coll={activeColl}
                 queryText={queryText}
                 onQueryText={setQueryText}
                 onRun={runQuery}
@@ -1109,9 +1269,13 @@ export default function App() {
         </span>
         <span className="hidden xl:inline">{connState.info.format}</span>
         <span className="ml-auto flex items-center gap-3">
-          <span className="flex items-center gap-1 text-emerald-500/80" title="Live sync: external changes appear automatically">
+          <button
+            onClick={() => setDialog({ kind: 'activity' })}
+            className="flex items-center gap-1 rounded px-1 py-0.5 text-emerald-500/80 hover:bg-ink-700 hover:text-emerald-300"
+            title="Live sync is on — click for the activity feed"
+          >
             <Activity size={10} /> live sync
-          </span>
+          </button>
           <button
             onClick={() => setDialog({ kind: 'server' })}
             title="HTTP bridge (server mode) — localhost REST API"
@@ -1278,6 +1442,25 @@ export default function App() {
           }}
         />
       )}
+
+      {dialog?.kind === 'activity' && <ActivityFeed onClose={() => setDialog(null)} />}
+
+      {dialog?.kind === 'trash' && hasDb && (
+        <TrashDialog
+          db={activeDb}
+          onClose={() => setDialog(null)}
+          onRestored={async () => {
+            setBanner({ kind: 'ok', text: 'Document restored from the trash.' });
+            await refreshAll();
+          }}
+        />
+      )}
+
+      {dialog?.kind === 'analyze' && hasColl && (
+        <SchemaAnalyzerDialog db={activeDb} coll={activeColl} onClose={() => setDialog(null)} />
+      )}
+
+      {dialog?.kind === 'mcp' && <McpDialog onClose={() => setDialog(null)} />}
 
       {dialog?.kind === 'bulk-set' && (
         <BulkSetDialog count={selection.size} onClose={() => setDialog(null)} onApply={bulkSet} />

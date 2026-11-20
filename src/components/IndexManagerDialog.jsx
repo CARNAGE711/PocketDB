@@ -2,7 +2,7 @@
  * IndexManagerDialog — list / create / drop the sidecar indexes that let
  * the engine prune scans on equality & $in predicates.
  */
-import { Key, Plus, Trash2 } from 'lucide-react';
+import { Key, Layers, Plus, ShieldCheck, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { api } from '../lib/api.js';
 import { Banner, Modal } from './ui.jsx';
@@ -10,6 +10,7 @@ import { Banner, Modal } from './ui.jsx';
 export default function IndexManagerDialog({ db, coll, onClose }) {
   const [indexes, setIndexes] = useState([]);
   const [field, setField] = useState('');
+  const [unique, setUnique] = useState(false);
   const [error, setError] = useState(null);
   const [notice, setNotice] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -25,9 +26,12 @@ export default function IndexManagerDialog({ db, coll, onClose }) {
     setError(null);
     setBusy(true);
     try {
-      const res = await api.createIndex(db, coll, field.trim());
-      setNotice(`Index on "${res.field}" built over ${res.documents} document(s).`);
+      const res = await api.createIndex(db, coll, field.trim(), unique);
+      setNotice(
+        `${res.unique ? 'Unique ' : ''}index on "${res.field}" built over ${res.documents} document(s).`
+      );
       setField('');
+      setUnique(false);
       await load();
     } catch (e) {
       setError(e.message);
@@ -60,8 +64,27 @@ export default function IndexManagerDialog({ db, coll, onClose }) {
       <div className="space-y-2">
         {indexes.map((idx) => (
           <div key={idx.field} className="group flex items-center gap-3 rounded-lg border border-ink-700 bg-ink-900 px-3 py-2">
-            <Key size={14} className="shrink-0 text-brand-300" />
-            <code className="min-w-0 flex-1 truncate font-mono text-xs text-slate-200">{idx.field}</code>
+            {idx.fields.length > 1 ? (
+              <Layers size={14} className="shrink-0 text-violet-300" />
+            ) : (
+              <Key size={14} className="shrink-0 text-brand-300" />
+            )}
+            <span className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
+              {idx.fields.map((f, i) => (
+                <span key={f} className="flex items-center gap-1">
+                  {i > 0 && <span className="font-mono text-[10px] text-slate-600">+</span>}
+                  <code className="rounded bg-ink-800 px-1.5 py-0.5 font-mono text-[11px] text-slate-200">{f}</code>
+                </span>
+              ))}
+              {idx.unique && (
+                <span
+                  className="flex items-center gap-1 rounded bg-emerald-500/15 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wide text-emerald-300"
+                  title="Duplicate values are rejected on insert/update"
+                >
+                  <ShieldCheck size={9} /> unique
+                </span>
+              )}
+            </span>
             <span className="shrink-0 font-mono text-[10px] text-slate-600">
               {idx.entryCount} keys · {new Date(idx.createdAt).toLocaleString()}
             </span>
@@ -83,25 +106,38 @@ export default function IndexManagerDialog({ db, coll, onClose }) {
         )}
       </div>
 
-      <div className="mt-4 flex items-center gap-2 border-t border-ink-700 pt-4">
-        <input
-          autoFocus
-          value={field}
-          onChange={(e) => setField(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && field.trim() && create()}
-          placeholder="field e.g. profile.age"
-          className="min-w-0 flex-1 rounded border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs text-slate-100 outline-none placeholder:text-slate-600 focus:border-brand-500"
-        />
-        <button
-          onClick={create}
-          disabled={!field.trim() || busy}
-          className="flex shrink-0 items-center gap-1.5 rounded-md bg-brand-600 px-3 py-2 text-xs font-medium text-ink-950 hover:bg-brand-500 disabled:opacity-40"
-        >
-          <Plus size={13} /> {busy ? 'Building…' : 'Create index'}
-        </button>
+      <div className="mt-4 border-t border-ink-700 pt-4">
+        <div className="flex items-center gap-2">
+          <input
+            autoFocus
+            value={field}
+            onChange={(e) => setField(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && field.trim() && create()}
+            placeholder="field e.g. profile.age — or a+b for compound"
+            className="min-w-0 flex-1 rounded border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs text-slate-100 outline-none placeholder:text-slate-600 focus:border-brand-500"
+          />
+          <button
+            onClick={create}
+            disabled={!field.trim() || busy}
+            className="flex shrink-0 items-center gap-1.5 rounded-md bg-brand-600 px-3 py-2 text-xs font-medium text-ink-950 hover:bg-brand-500 disabled:opacity-40"
+          >
+            <Plus size={13} /> {busy ? 'Building…' : 'Create index'}
+          </button>
+        </div>
+        <label className="mt-2 flex cursor-pointer items-center gap-2 text-[11px] text-slate-400">
+          <input
+            type="checkbox"
+            checked={unique}
+            onChange={(e) => setUnique(e.target.checked)}
+            className="h-3.5 w-3.5 accent-brand-500"
+          />
+          <ShieldCheck size={12} className={unique ? 'text-emerald-300' : 'text-slate-600'} />
+          Unique — reject documents whose indexed value already exists (missing values are skipped)
+        </label>
       </div>
-      <p className="mt-2 text-[11px] text-slate-600">
-        Dot-notation fields index arrays per element (multikey). Indexes rebuild automatically after every write.
+      <p className="mt-2 text-[11px] leading-relaxed text-slate-600">
+        Compound indexes use <span className="font-mono text-slate-500">a+b</span> (equality on every field). Dot-notation
+        fields index arrays per element (multikey). Indexes rebuild automatically after every write.
       </p>
     </Modal>
   );

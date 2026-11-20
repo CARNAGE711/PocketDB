@@ -1,7 +1,7 @@
 {
   "name": "pocketdb",
   "productName": "PocketDB",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "PocketDB — a lightweight, offline-first NoSQL document database studio and local storage engine.",
   "main": "electron/main.cjs",
   "license": "MIT",
@@ -12,7 +12,8 @@
     "dev": "concurrently -k \"npm:dev:vite\" \"npm:dev:electron\"",
     "build": "vite build",
     "start": "npm run build && electron .",
-    "package": "npm run build && electron-builder"
+    "package": "npm run build && electron-builder",
+    "mcp": "node electron/mcp-server.cjs"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.6.0",
@@ -42,6 +43,16 @@
     "files": [
       "dist/**/*",
       "electron/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "electron/mcp-server.cjs",
+        "to": "mcp/mcp-server.cjs"
+      },
+      {
+        "from": "electron/db",
+        "to": "mcp/db"
+      }
     ],
     "directories": {
       "output": "release"

@@ -12,7 +12,7 @@
  * the right-edge (LogOut) button and the status-strip connection chip.
  */
 import {
-  Archive, ChevronDown, ChevronLeft, ChevronRight, Command, Database, Files, FileUp,
+  Activity, Archive, ChevronDown, ChevronLeft, ChevronRight, Command, Database, Eye, Files, FileUp,
   FolderOpen, HardDrive, Image as ImageIcon, Layers, LogOut, Plus, RefreshCw, Search, SearchX, Star, Trash2, Workflow,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
@@ -60,7 +60,7 @@ export default function CommandBar({
   databases, activeDb, activeColl, surface,
   onOpenDb, onOpenColl, onCreateDb, onNewColl, onDropDb, onDropColl,
   onBack, canGoBack = false, backTitle = 'Back', onRefresh, onPalette, onDisconnect,
-  onFilesVault, onImportDocs, onImportMongo, onSnapshots,
+  onFilesVault, onImportDocs, onImportMongo, onSnapshots, onActivity, onTrash,
   pinnedColls = [], onTogglePin, recentColls = [],
 }) {
   const [dbMenu, setDbMenu] = useState(false);
@@ -95,7 +95,10 @@ export default function CommandBar({
 
   /* database totals for the stats chip */
   const totals = db
-    ? colls.reduce((acc, c) => ({ docs: acc.docs + c.count, size: acc.size + c.size }), { docs: 0, size: 0 })
+    ? colls.reduce(
+      (acc, c) => ({ docs: acc.docs + (c.count || 0), size: acc.size + (c.size || 0) }),
+      { docs: 0, size: 0 }
+    )
     : null;
 
   const dbNeedle = dbFilter.trim().toLowerCase();
@@ -125,23 +128,32 @@ export default function CommandBar({
         onClick={() => { onOpenColl(c.name); setCollMenu(false); }}
         className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2 text-left text-sm"
       >
-        <FolderOpen
-          size={13}
-          className={c.name === activeColl ? 'shrink-0 text-brand-400' : 'shrink-0 text-slate-600'}
-        />
+        {c.view ? (
+          <Eye size={13} className="shrink-0 text-indigo-400" />
+        ) : (
+          <FolderOpen
+            size={13}
+            className={c.name === activeColl ? 'shrink-0 text-brand-400' : 'shrink-0 text-slate-600'}
+          />
+        )}
         <span className={`truncate ${c.name === activeColl ? 'font-medium text-brand-300' : 'text-slate-300'}`}>
           {c.name}
         </span>
+        {c.view && (
+          <span className="shrink-0 rounded bg-indigo-500/15 px-1 py-0.5 font-mono text-[9px] text-indigo-300">
+            view
+          </span>
+        )}
         <span className="ml-auto shrink-0 font-mono text-[10px] text-slate-600">
-          {c.count} · {c.size ? `${Math.max(1, Math.round(c.size / 1024))} KB` : '—'}
+          {c.count === null ? '—' : c.count} · {c.view ? `of ${c.source}` : c.size ? `${Math.max(1, Math.round(c.size / 1024))} KB` : '—'}
         </span>
       </button>
       {starBtn(c.name)}
       <button
         onClick={(e) => { e.stopPropagation(); setCollMenu(false); onDropColl(db.name, c.name); }}
-        title="Drop collection"
+        title={c.view ? 'Delete view' : 'Drop collection'}
         className="mr-1 rounded p-1 text-slate-600 opacity-0 transition-opacity hover:bg-ink-700 hover:text-rose-400 group-hover:opacity-100"
-        aria-label="Drop collection"
+        aria-label={c.view ? 'Delete view' : 'Drop collection'}
       >
         <Trash2 size={12} />
       </button>
@@ -247,9 +259,18 @@ export default function CommandBar({
                 {activeColl || (colls.length ? 'Collections' : 'No collection')}
               </span>
               {activeCollStats && (
-                <span className="shrink-0 rounded bg-ink-800 px-1.5 py-0.5 font-mono text-[10px] text-slate-500" title="Documents in this collection">
-                  {activeCollStats.count}
-                </span>
+                activeCollStats.view ? (
+                  <span
+                    className="shrink-0 rounded bg-indigo-500/15 px-1.5 py-0.5 font-mono text-[10px] text-indigo-300"
+                    title={`Read-only view of "${activeCollStats.source}"`}
+                  >
+                    view
+                  </span>
+                ) : (
+                  <span className="shrink-0 rounded bg-ink-800 px-1.5 py-0.5 font-mono text-[10px] text-slate-500" title="Documents in this collection">
+                    {activeCollStats.count}
+                  </span>
+                )
               )}
               <ChevronDown size={13} className="text-slate-500" />
             </button>
@@ -347,6 +368,23 @@ export default function CommandBar({
           className={toolBtn}
         >
           <Archive size={14} /> <span className="hidden lg:inline">Snapshots</span>
+        </button>
+        <button
+          onClick={onActivity}
+          title="Activity — live feed of inserts, updates, deletes, imports and snapshots"
+          aria-label="Activity feed"
+          className={toolBtn}
+        >
+          <Activity size={14} /> <span className="hidden xl:inline">Activity</span>
+        </button>
+        <button
+          onClick={onTrash}
+          disabled={!activeDb}
+          title="Trash — restore soft-deleted documents"
+          aria-label="Trash"
+          className={toolBtn}
+        >
+          <Trash2 size={14} /> <span className="hidden xl:inline">Trash</span>
         </button>
       </div>
 

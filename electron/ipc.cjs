@@ -15,6 +15,7 @@
 const { ipcMain, dialog, app, shell, BrowserWindow } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const { PocketEngine } = require('./db/engine.cjs');
 const { assertValidName } = require('./db/storage.cjs');
 const { parsePocketUri, toPocketUri } = require('./db/uri.cjs');
@@ -82,6 +83,75 @@ function registerIpc(defaultDataDir) {
   // Snapshots live OUTSIDE the data dir (a folder inside it would look
   // like a database): <userData>/pocketdb-snapshots/<db>/<stamp>/
   const snapshotsDir = () => path.join(app.getPath('userData'), 'pocketdb-snapshots');
+
+  /* ------------------------- activity feed -------------------------- */
+
+  const activityLog = []; // newest first, bounded
+  function pushActivity(entry) {
+    const item = { id: crypto.randomUUID(), at: Date.now(), ...entry };
+    activityLog.unshift(item);
+    if (activityLog.length > 250) activityLog.pop();
+    const win = BrowserWindow.getAllWindows()[0];
+    if (win && !win.isDestroyed()) win.webContents.send('engine:activity', item);
+    return item;
+  }
+
+  /* --------------------- scheduled snapshots ------------------------ */
+
+  const scheduleFile = () => path.join(app.getPath('userData'), 'pocketdb-snapshot-schedule.json');
+  const defaultSchedule = () => ({ enabled: false, intervalMinutes: 60, keep: 5, lastRun: null });
+  function readSchedule() {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(scheduleFile(), 'utf8'));
+      return { ...defaultSchedule(), ...parsed };
+    } catch {
+      return defaultSchedule();
+    }
+  }
+  function writeSchedule(next) {
+    try {
+      fs.writeFileSync(scheduleFile(), JSON.stringify(next, null, 2), 'utf8');
+    } catch (err) {
+      console.error('[pocketdb] could not persist snapshot schedule:', err.message);
+    }
+    return next;
+  }
+
+  function runScheduledSnapshots() {
+    const cfg = readSchedule();
+    if (!cfg.enabled || !activeDataDir) return null;
+    const due = !cfg.lastRun || Date.now() - cfg.lastRun >= cfg.intervalMinutes * 60 * 1000;
+    if (!due) return null;
+    const engine = engines.get(activeDataDir);
+    if (!engine) return null;
+    let created = 0;
+    try {
+      for (const db of engine.listDatabases().map((d) => d.name)) {
+        const snap = Snapshots.createSnapshot({
+          dataDir: activeDataDir,
+          rootDir: snapshotsDir(),
+          db,
+        });
+        created++;
+        // Retention: keep the newest `keep` snapshots per database.
+        const all = Snapshots.listSnapshots({ rootDir: snapshotsDir(), db });
+        for (const old of all.slice(Math.max(1, cfg.keep))) {
+          try { Snapshots.deleteSnapshot({ rootDir: snapshotsDir(), db, id: old.id }); } catch { /* best effort */ }
+        }
+        pushActivity({ op: 'snapshot', db, detail: `auto snapshot ${snap.id}`, auto: true });
+      }
+    } catch (err) {
+      console.error('[pocketdb] scheduled snapshot failed:', err.message);
+    }
+    cfg.lastRun = Date.now();
+    writeSchedule(cfg);
+    if (created > 0) notifyFsChange();
+    return created;
+  }
+
+  // Check once a minute; runs only while a data directory is connected.
+  const scheduleTimer = setInterval(runScheduledSnapshots, 60 * 1000);
+  if (scheduleTimer.unref) scheduleTimer.unref();
 
   // Auto-update plumbing (electron-updater; feed via POCKETDB_UPDATE_URL).
   const updater = setupUpdater({
@@ -208,13 +278,33 @@ function registerIpc(defaultDataDir) {
     /* -- documents --------------------------------------------------- */
     'documents.find': ({ db, coll, filter, sort, limit, skip, projection }) =>
       getEngine().find(db, coll, { filter, sort, limit, skip, projection }),
-    'documents.insertOne': ({ db, coll, doc }) => getEngine().insertOne(db, coll, doc),
-    'documents.updateOne': ({ db, coll, filter, update }) =>
-      getEngine().updateOne(db, coll, filter, update),
-    'documents.updateMany': ({ db, coll, filter, update }) =>
-      getEngine().updateMany(db, coll, filter, update),
-    'documents.deleteOne': ({ db, coll, id }) => getEngine().deleteOne(db, coll, { _id: id }),
-    'documents.deleteMany': ({ db, coll, filter }) => getEngine().deleteMany(db, coll, filter),
+    'documents.explain': ({ db, coll, filter, sort }) =>
+      getEngine().explain(db, coll, { filter, sort }),
+    'documents.insertOne': ({ db, coll, doc }) => {
+      const res = getEngine().insertOne(db, coll, doc);
+      pushActivity({ op: 'insert', db, coll, detail: res.insertedId });
+      return res;
+    },
+    'documents.updateOne': ({ db, coll, filter, update }) => {
+      const res = getEngine().updateOne(db, coll, filter, update);
+      pushActivity({ op: 'update', db, coll, detail: `${res.modified} modified` });
+      return res;
+    },
+    'documents.updateMany': ({ db, coll, filter, update }) => {
+      const res = getEngine().updateMany(db, coll, filter, update);
+      pushActivity({ op: 'update', db, coll, detail: `${res.modified} modified` });
+      return res;
+    },
+    'documents.deleteOne': ({ db, coll, id }) => {
+      const res = getEngine().deleteOne(db, coll, { _id: id });
+      pushActivity({ op: 'delete', db, coll, detail: `${res.deleted} deleted` });
+      return res;
+    },
+    'documents.deleteMany': ({ db, coll, filter }) => {
+      const res = getEngine().deleteMany(db, coll, filter);
+      pushActivity({ op: 'delete', db, coll, detail: `${res.deleted} deleted` });
+      return res;
+    },
     'documents.count': ({ db, coll, filter }) => getEngine().count(db, coll, filter),
 
     /* -- aggregations ------------------------------------------------ */
@@ -327,21 +417,51 @@ function registerIpc(defaultDataDir) {
 
     /* -- indexes ------------------------------------------------------ */
     'indexes.list': ({ db, coll }) => getEngine().listIndexes(db, coll),
-    'indexes.create': ({ db, coll, field }) => {
-      const result = getEngine().createIndex(db, coll, field);
+    'indexes.create': ({ db, coll, field, unique }) => {
+      const result = getEngine().createIndex(db, coll, field, { unique: Boolean(unique) });
+      pushActivity({ op: 'index', db, coll, detail: `created ${result.field}${result.unique ? ' (unique)' : ''}` });
       return result;
     },
-    'indexes.drop': ({ db, coll, field }) => getEngine().dropIndex(db, coll, field),
+    'indexes.drop': ({ db, coll, field }) => {
+      const res = getEngine().dropIndex(db, coll, field);
+      pushActivity({ op: 'index', db, coll, detail: `dropped ${field}` });
+      return res;
+    },
+
+    /* -- saved views (read-only pipelines) ----------------------------- */
+    'views.list': ({ db }) => getEngine().listViews(db),
+    'views.save': ({ db, id, name, coll, pipeline }) => {
+      const view = getEngine().saveView(db, { id, name, coll, pipeline });
+      pushActivity({ op: 'view', db, coll: view.coll, detail: `saved view "${view.name}"` });
+      return view;
+    },
+    'views.delete': ({ db, id }) => {
+      const res = getEngine().deleteView(db, id);
+      pushActivity({ op: 'view', db, detail: 'view deleted' });
+      return res;
+    },
+
+    /* -- trash (soft-deleted documents) -------------------------------- */
+    'trash.list': ({ db, coll }) => getEngine().listTrash(db, { coll }),
+    'trash.restore': ({ db, trashId }) => {
+      const res = getEngine().restoreTrash(db, trashId);
+      pushActivity({ op: 'restore', db, coll: res.coll, detail: `restored ${res.restoredId}` });
+      return res;
+    },
+    'trash.purge': ({ db, trashId }) => getEngine().purgeTrash(db, trashId),
+    'trash.empty': ({ db }) => getEngine().emptyTrash(db),
 
     /* -- schema validation -------------------------------------------- */
     'schema.get': ({ db, coll }) => getEngine().getSchema(db, coll),
     'schema.set': ({ db, coll, rules }) => getEngine().setSchema(db, coll, rules),
     'schema.clear': ({ db, coll }) => getEngine().clearSchema(db, coll),
+    'schema.analyze': ({ db, coll }) => getEngine().analyzeSchema(db, coll),
 
     /* -- history (revision log) ---------------------------------------- */
     'history.list': ({ db, coll, id, limit }) => getEngine().listHistory(db, coll, { id, limit }),
     'history.restore': ({ db, coll, revId }) => {
       const result = getEngine().restoreRevision(db, coll, revId);
+      pushActivity({ op: 'restore', db, coll, detail: `revision ${revId}` });
       notifyFsChange();
       return result;
     },
@@ -349,27 +469,79 @@ function registerIpc(defaultDataDir) {
     /* -- snapshots (database backups) ----------------------------------- */
     'snapshots.create': ({ db }) => {
       const result = Snapshots.createSnapshot({ dataDir: activeDataDir, rootDir: snapshotsDir(), db });
+      pushActivity({ op: 'snapshot', db, detail: `snapshot ${result.id}` });
       notifyFsChange();
       return result;
     },
     'snapshots.list': ({ db }) => Snapshots.listSnapshots({ rootDir: snapshotsDir(), db }),
     'snapshots.restore': ({ db, id }) => {
       const result = Snapshots.restoreSnapshot({ dataDir: activeDataDir, rootDir: snapshotsDir(), db, id });
+      pushActivity({ op: 'restore', db, detail: `snapshot ${id}` });
       notifyFsChange();
       return result;
     },
     'snapshots.delete': ({ db, id }) => Snapshots.deleteSnapshot({ rootDir: snapshotsDir(), db, id }),
+    'snapshots.scheduleGet': () => {
+      const cfg = readSchedule();
+      return {
+        ...cfg,
+        nextRun: cfg.enabled && cfg.lastRun
+          ? cfg.lastRun + cfg.intervalMinutes * 60 * 1000
+          : cfg.enabled
+            ? Date.now()
+            : null,
+      };
+    },
+    'snapshots.scheduleSet': ({ enabled, intervalMinutes, keep }) => {
+      const cfg = readSchedule();
+      if (enabled !== undefined) cfg.enabled = Boolean(enabled);
+      if (intervalMinutes !== undefined) {
+        const n = Number(intervalMinutes);
+        if (!Number.isFinite(n) || n < 1) throw new Error('Interval must be at least 1 minute.');
+        cfg.intervalMinutes = n;
+      }
+      if (keep !== undefined) {
+        const n = Number(keep);
+        if (!Number.isInteger(n) || n < 1) throw new Error('Keep must be at least 1 snapshot.');
+        cfg.keep = n;
+      }
+      writeSchedule(cfg);
+      return { ...cfg };
+    },
+    'activity.list': ({ limit = 100 } = {}) => activityLog.slice(0, limit),
 
     /* -- import (JSON / NDJSON / CSV + MongoDB mirror) ------------------- */
     'imports.documents': ({ db, coll, text, format }) => {
       const result = importDocuments(getEngine(), { db, coll, text, format });
+      pushActivity({ op: 'import', db, coll, detail: `${result.inserted ?? result.count ?? '?'} imported` });
       return result;
     },
-    'imports.mongodb': ({ uri, dbs, limitPerColl }) =>
-      importFromMongo({ uri, engine: getEngine(), dbs, limitPerColl }),
+    'imports.mongodb': async ({ uri, dbs, limitPerColl }) => {
+      const result = await importFromMongo({ uri, engine: getEngine(), dbs, limitPerColl });
+      pushActivity({ op: 'import', db: '(mongo)', detail: 'MongoDB mirror finished' });
+      return result;
+    },
 
     /* -- app + auto-update ------------------------------------------------ */
     'app.version': () => app.getVersion(),
+
+    /* -- MCP server (standalone stdio bridge) -------------------------- */
+    'mcp.info': () => {
+      const packaged = path.join(process.resourcesPath || '', 'mcp', 'mcp-server.cjs');
+      const dev = path.join(__dirname, 'mcp-server.cjs');
+      const script = app.isPackaged && fs.existsSync(packaged) ? packaged : dev;
+      const data = activeDataDir || '';
+      return {
+        script,
+        dataDir: data,
+        command: `node "${script}" --data "${data}"`,
+        config: {
+          mcpServers: {
+            pocketdb: { command: 'node', args: [script, '--data', data] },
+          },
+        },
+      };
+    },
     'updates.check': () => updater.check(),
     'updates.install': () => {
       updater.install();

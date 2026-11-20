@@ -40,7 +40,7 @@ function useColumns(docs) {
   }, [docs]);
 }
 
-function DocActions({ doc, onEdit, onDelete, onDuplicate, onHistory }) {
+function DocActions({ doc, onEdit, onDelete, onDuplicate, onHistory, readOnly = false }) {
   return (
     <div className="flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
       <button
@@ -51,30 +51,34 @@ function DocActions({ doc, onEdit, onDelete, onDuplicate, onHistory }) {
       >
         <Clock size={13} />
       </button>
-      <button
-        onClick={() => onEdit(doc)}
-        title="Edit document"
-        className="rounded p-1 text-slate-400 hover:bg-ink-700 hover:text-slate-100"
-        aria-label="Edit document"
-      >
-        <Pencil size={13} />
-      </button>
-      <button
-        onClick={() => onDuplicate(doc)}
-        title="Duplicate document"
-        className="rounded p-1 text-slate-400 hover:bg-ink-700 hover:text-slate-100"
-        aria-label="Duplicate document"
-      >
-        <Copy size={13} />
-      </button>
-      <button
-        onClick={() => onDelete(doc)}
-        title="Delete document"
-        className="rounded p-1 text-slate-400 hover:bg-ink-700 hover:text-rose-400"
-        aria-label="Delete document"
-      >
-        <Trash2 size={13} />
-      </button>
+      {!readOnly && (
+        <>
+          <button
+            onClick={() => onEdit(doc)}
+            title="Edit document"
+            className="rounded p-1 text-slate-400 hover:bg-ink-700 hover:text-slate-100"
+            aria-label="Edit document"
+          >
+            <Pencil size={13} />
+          </button>
+          <button
+            onClick={() => onDuplicate(doc)}
+            title="Duplicate document"
+            className="rounded p-1 text-slate-400 hover:bg-ink-700 hover:text-slate-100"
+            aria-label="Duplicate document"
+          >
+            <Copy size={13} />
+          </button>
+          <button
+            onClick={() => onDelete(doc)}
+            title="Delete document"
+            className="rounded p-1 text-slate-400 hover:bg-ink-700 hover:text-rose-400"
+            aria-label="Delete document"
+          >
+            <Trash2 size={13} />
+          </button>
+        </>
+      )}
     </div>
   );
 }
@@ -143,7 +147,7 @@ function GridCell({ doc, col, onCellEdit }) {
   );
 }
 
-function DataGrid({ docs, onEdit, onDelete, onDuplicate, onHistory, selection, onToggleSelect, onCellEdit }) {
+function DataGrid({ docs, onEdit, onDelete, onDuplicate, onHistory, selection, onToggleSelect, onCellEdit, readOnly = false }) {
   const columns = useColumns(docs);
   const hasSelection = Boolean(selection);
 
@@ -181,7 +185,7 @@ function DataGrid({ docs, onEdit, onDelete, onDuplicate, onHistory, selection, o
                 ))}
                 <td className="px-3 py-1.5 text-right">
                   <div className="flex justify-end">
-                    <DocActions doc={doc} onEdit={onEdit} onDelete={onDelete} onDuplicate={onDuplicate} onHistory={onHistory} />
+                    <DocActions doc={doc} onEdit={onEdit} onDelete={onDelete} onDuplicate={onDuplicate} onHistory={onHistory} readOnly={readOnly} />
                   </div>
                 </td>
               </tr>
@@ -197,7 +201,7 @@ function DataGrid({ docs, onEdit, onDelete, onDuplicate, onHistory, selection, o
 /* Ledger view — the PocketDB signature layout                         */
 /* ------------------------------------------------------------------ */
 
-function LedgerView({ docs, onEdit, onDelete, onDuplicate, onHistory, selection, onToggleSelect }) {
+function LedgerView({ docs, onEdit, onDelete, onDuplicate, onHistory, selection, onToggleSelect, readOnly = false }) {
   const [openId, setOpenId] = useState(null);
 
   return (
@@ -235,7 +239,7 @@ function LedgerView({ docs, onEdit, onDelete, onDuplicate, onHistory, selection,
                 )}
               </span>
               <span className="flex shrink-0" onClick={(e) => e.stopPropagation()}>
-                <DocActions doc={doc} onEdit={onEdit} onDelete={onDelete} onDuplicate={onDuplicate} onHistory={onHistory} />
+                <DocActions doc={doc} onEdit={onEdit} onDelete={onDelete} onDuplicate={onDuplicate} onHistory={onHistory} readOnly={readOnly} />
               </span>
             </div>
             {open && (
@@ -256,7 +260,7 @@ function LedgerView({ docs, onEdit, onDelete, onDuplicate, onHistory, selection,
 
 export default function DocumentExplorer({
   view, docs, onEdit, onDelete, onDuplicate,
-  onHistory, selection, onToggleSelect, onCellEdit,
+  onHistory, selection, onToggleSelect, onCellEdit, readOnly = false,
 }) {
   if (docs.length === 0) {
     return (
@@ -269,12 +273,19 @@ export default function DocumentExplorer({
       </div>
     );
   }
-  const shared = { onEdit, onDelete, onDuplicate, onHistory, selection, onToggleSelect };
+  const shared = { onEdit, onDelete, onDuplicate, onHistory, selection, onToggleSelect, readOnly };
   if (view === 'grid') {
-    return <DataGrid docs={docs} {...shared} onCellEdit={onCellEdit} />;
+    return <DataGrid docs={docs} {...shared} onCellEdit={readOnly ? undefined : onCellEdit} />;
   }
   if (view === 'ledger') return <LedgerView docs={docs} {...shared} />;
   return (
-    <JsonTreeView docs={docs} {...shared} onEdit={onEdit} onDelete={onDelete} onDuplicate={onDuplicate} />
+    <JsonTreeView
+      docs={docs}
+      {...shared}
+      onEdit={onEdit}
+      onDelete={onDelete}
+      onDuplicate={onDuplicate}
+      readOnly={readOnly}
+    />
   );
 }

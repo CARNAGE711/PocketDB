@@ -40,6 +40,7 @@ export const api = {
 
   /* documents */
   find: (db, coll, opts = {}) => call('documents.find', { db, coll, ...opts }),
+  explain: (db, coll, filter, sort) => call('documents.explain', { db, coll, filter, sort }),
   insertOne: (db, coll, doc) => call('documents.insertOne', { db, coll, doc }),
   updateOne: (db, coll, filter, update) => call('documents.updateOne', { db, coll, filter, update }),
   deleteOne: (db, coll, id) => call('documents.deleteOne', { db, coll, id }),
@@ -51,13 +52,25 @@ export const api = {
 
   /* indexes */
   listIndexes: (db, coll) => call('indexes.list', { db, coll }),
-  createIndex: (db, coll, field) => call('indexes.create', { db, coll, field }),
+  createIndex: (db, coll, field, unique = false) => call('indexes.create', { db, coll, field, unique }),
   dropIndex: (db, coll, field) => call('indexes.drop', { db, coll, field }),
 
-  /* schema validation */
+  /* saved views (read-only pipelines) */
+  listViews: (db) => call('views.list', { db }),
+  saveView: (db, { id, name, coll, pipeline }) => call('views.save', { db, id, name, coll, pipeline }),
+  deleteView: (db, id) => call('views.delete', { db, id }),
+
+  /* trash (soft-deleted documents) */
+  listTrash: (db, coll) => call('trash.list', { db, coll }),
+  restoreTrash: (db, trashId) => call('trash.restore', { db, trashId }),
+  purgeTrash: (db, trashId) => call('trash.purge', { db, trashId }),
+  emptyTrash: (db) => call('trash.empty', { db }),
+
+  /* schema validation + analyzer */
   getSchema: (db, coll) => call('schema.get', { db, coll }),
   setSchema: (db, coll, rules) => call('schema.set', { db, coll, rules }),
   clearSchema: (db, coll) => call('schema.clear', { db, coll }),
+  analyzeSchema: (db, coll) => call('schema.analyze', { db, coll }),
 
   /* history (revision log) */
   listHistory: (db, coll, id) => call('history.list', { db, coll, id }),
@@ -68,6 +81,14 @@ export const api = {
   listSnapshots: (db) => call('snapshots.list', { db }),
   restoreSnapshot: (db, id) => call('snapshots.restore', { db, id }),
   deleteSnapshot: (db, id) => call('snapshots.delete', { db, id }),
+  getSnapshotSchedule: () => call('snapshots.scheduleGet'),
+  setSnapshotSchedule: (opts) => call('snapshots.scheduleSet', opts),
+
+  /* activity feed */
+  listActivity: (limit) => call('activity.list', { limit }),
+
+  /* MCP server configuration */
+  mcpInfo: () => call('mcp.info'),
 
   /* import (JSON / NDJSON / CSV + MongoDB mirror) */
   importDocs: (db, coll, { text, format } = {}) => call('imports.documents', { db, coll, text, format }),
@@ -102,4 +123,5 @@ export const api = {
 
   /* live change events (pushed from the main process) */
   onEngineChanged: (callback) => window.pocketdb.onEngineChanged(callback),
+  onActivity: (callback) => window.pocketdb.onActivity(callback),
 };

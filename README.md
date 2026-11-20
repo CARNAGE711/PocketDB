@@ -14,7 +14,7 @@ engine built with Node.js.
 | **Connections** | Launchpad entry screen: inline quick-connect, saved-connection cards with color bands, favorites (auto-connect), full form sheet with URI/directory toggle, optional encryption passphrase |
 | **Storage engine** | Filesystem hierarchy: database folder → NDJSON collection files, atomic writes, auto ObjectId |
 | **Query engine** | Dot-notation selectors with `$eq $ne $gt $gte $lt $lte $in $nin $regex $exists` + `$and/$or/$not` + token-based full-text `$text` |
-| **Studio UI** | Hub-and-surface console: top command bar with history-aware back, database/collection switchers (filter box, ★ pinned & recent collections, live count chips, database stats chip, labeled data-tools cluster), per-database dashboard (stat tiles + collection cards), grid ↔ ledger ↔ JSON-tree explorer, bottom filter console (JSON editor **+ visual Builder**), insert/edit dialogs |
+| **Studio UI** | Hub-and-surface console: top command bar with history-aware back, database/collection switchers (filter box, ★ pinned & recent collections, live count chips, database stats chip, labeled data-tools cluster), **persistent collection tabs**, per-database dashboard (stat tiles + collection cards), grid ↔ ledger ↔ JSON-tree explorer, bottom filter console (JSON editor **+ visual Builder**), insert/edit dialogs |
 | **Pagination** | Collection reads are paged (25 / 50 / 100 / 250 per page) with a live `matched` count — no giant dumps |
 | **Saved queries** | Name and persist per-collection filters; reload them from the console's Saved menu or the Ctrl+K palette |
 | **Export** | One-click collection export to JSON or CSV (dotted-path columns), via save dialog |
@@ -22,7 +22,14 @@ engine built with Node.js.
 | **Duplicate document** | Copy any document in one click (fresh `_id`) from every explorer view |
 | **Bulk actions** | Toggle **bulk selection** on any view (checkbox column), then delete or `$set` all selected documents with one `_id $in` update |
 | **Inline editing** | Double-click a grid cell to edit it in place — values parse as JSON (numbers, booleans, objects) and apply as dotted-path `$set` |
-| **Indexes** | Per-collection sidecar index maps (`coll.ndjson.idx.json`): equality & `$in` predicates prune scans automatically; multikey (array) fields supported; rebuilt after every write; managed from the collection header (key icon) |
+| **Indexes** | Per-collection sidecar index maps (`coll.ndjson.idx.json`): equality & `$in` predicates prune scans automatically; **compound** (`a+b`) and **unique** indexes (sparse, per-element for arrays) enforced before every write; multikey (array) fields supported; rebuilt after every write; managed from the collection header (key icon) |
+| **Explain plan** | **Explain** in the filter console reports the winning plan — `IXSCAN` vs `COLLSCAN`, `FETCH`/`MATCH`/`SORT` stages, candidates examined, matches and timing |
+| **Saved views** | Turn any pipeline into a named, **read-only virtual collection** (`_views.json`): query, count, export, chart and explain it; views carry an eye badge everywhere and never duplicate source data |
+| **Schema analyzer** | Scan a collection and map every dotted field path with fill rate, type distribution, distinct counts (capped) and sample values |
+| **Trash bin** | Deletes (single, bulk, or a dropped collection) land in a per-database trash (`_trash.json`, newest 500) — restore to the original collection or purge permanently |
+| **Activity feed** | Live engine event stream (inserts, updates, deletes, imports, indexes, views, restores, snapshots) with filters, pause and relative timestamps |
+| **Scheduled snapshots** | Snapshot every database on an interval (min 1 minute) with retention (keep newest N per database); configured in the Snapshots dialog |
+| **MCP server** | Bundled standalone stdio MCP server (`electron/mcp-server.cjs`, 16 tools) for Claude Desktop / Cursor / any MCP client — copy the ready-to-paste `mcpServers` config from the MCP dialog |
 | **Schema validation** | Optional per-collection rules (`coll.ndjson.schema.json`): required fields, types (string/number/boolean/object/array/null), enums — enforced on every insert/update, existing violations reported on save |
 | **Document history** | Every update/delete records a pre-image in `coll.ndjson.hist.json` (last 200 kept) — browse and **restore any revision** (keeps `_id`) from a document's clock icon |
 | **Snapshots** | One-click full copies of a database folder, stored *outside* the data directory with atomic restore (move-aside → copy → rollback on failure) — managed from the navbar or Ctrl+K |
@@ -50,10 +57,11 @@ pocketdb/
 ├── electron/                    # ===== desktop shell + backend =====
 │   ├── main.cjs                 # window creation, menu (+ update check), data-dir resolution
 │   ├── preload.cjs              # contextBridge: call() + onEngineChanged()/onUpdateStatus() push events
-│   ├── ipc.cjs                  # whitelisted engine registry, live-sync watcher, server mode, snapshots, imports, updater
+│   ├── ipc.cjs                  # whitelisted engine registry, live-sync watcher, server mode, snapshots, imports, updater, activity feed, schedules
+│   ├── mcp-server.cjs           # standalone stdio MCP server (16 tools) for AI clients
 │   ├── updater.cjs              # electron-updater wiring (feed via POCKETDB_UPDATE_URL)
 │   └── db/
-│       ├── engine.cjs           # PocketEngine: CRUD, namespaces, aggregation, files, indexes, schema, history, watch
+│       ├── engine.cjs           # PocketEngine: CRUD, namespaces, aggregation, files, indexes, schema, history, views, trash, explain, analyzer, watch
 │       ├── storage.cjs          # FileStorage: NDJSON files, atomic writes, cross-process locks, AES-GCM codec
 │       ├── query.cjs            # matcher, dot-notation, projections, pipeline runner ($group/$lookup/$replaceRoot, $text)
 │       ├── server.cjs           # HTTP bridge (REST over the engine, token auth, SSE change feed)
@@ -65,7 +73,10 @@ pocketdb/
 │       └── objectId.cjs         # MongoDB-style 24-hex unique id generator
 ├── scripts/                     # icon pipeline, build hooks, tests, server CLI, shell
 │   ├── pocketdb-server.cjs      # standalone HTTP bridge: node scripts/pocketdb-server.cjs [--lan] [--token=…]
-│   └── pocketdb-shell.cjs       # interactive REPL over the engine: node scripts/pocketdb-shell.cjs
+│   ├── pocketdb-shell.cjs       # interactive REPL over the engine: node scripts/pocketdb-shell.cjs
+│   ├── feature-test.cjs         # engine test for unique/compound indexes, views, trash, explain, analyzer
+│   ├── mcp-test.cjs             # MCP stdio protocol smoke test
+│   └── ui-smoke.cjs             # CDP-driven renderer smoke test of the studio surfaces
 ├── vscode-extension/            # ===== PocketDB for VS Code =====
 │   ├── package.json             # tree view, commands, menus, settings
 │   ├── extension.js             # databases/collections explorer + doc ops
@@ -94,7 +105,11 @@ pocketdb/
         ├── ImportDialog.jsx     # JSON/NDJSON/CSV file import
         ├── MongoImportDialog.jsx# mirror a mongodb:// server into PocketDB
         ├── ServerDialog.jsx     # HTTP bridge: port, token, LAN toggle, start/stop
-        ├── SnapshotsDialog.jsx  # full snapshot manager (create / restore / delete)
+        ├── SnapshotsDialog.jsx  # full snapshot manager (create / restore / delete) + scheduled snapshots
+        ├── ActivityFeed.jsx     # live engine event stream (filters, pause, clear)
+        ├── TrashDialog.jsx      # restore / purge / empty deleted documents
+        ├── SchemaAnalyzerDialog.jsx # field distribution, types, fill rates, samples
+        ├── McpDialog.jsx        # MCP server command + mcpServers config
         ├── DocsPanel.jsx        # in-app quick reference
         ├── TourOverlay.jsx      # 6-step first-launch tour
         ├── FilesVault.jsx       # GridFS-style binary storage UI (with image thumbnails)
@@ -116,7 +131,11 @@ All data lives under the OS user-data directory
 pocketdb-data/
 └── pocketdb-demo/            # a database = a folder
     ├── users.ndjson          # a collection = an NDJSON file (one doc per line)
-    └── tasks.ndjson
+    ├── tasks.ndjson
+    ├── users.ndjson.idx.json # index sidecar
+    ├── users.ndjson.hist.json# revision log
+    ├── _views.json           # saved views (virtual read-only collections)
+    └── _trash.json           # deleted documents (newest 500)
 ```
 
 Every document is a single JSON line with an auto-generated `_id`
@@ -246,6 +265,92 @@ rebuilt automatically after every write, so they can never go stale.
 Operators that can't prune safely (`$ne`, `$regex`, `$exists`, …) fall
 back to a full scan.
 
+- **Compound indexes** — enter `team+age` (or `a.b+c`) in the field box to
+  index the tuple. The engine uses the compound map for equality on all
+  fields and for a prefix of the fields.
+- **Unique indexes** — tick *unique*. Violations are rejected *before* any
+  write lands, on insert, update, revision restore and trash restore.
+  Unique indexes are **sparse** (documents missing the field are skipped);
+  for array fields uniqueness is enforced per element.
+
+### Explain plan
+
+The **Explain** button in the filter console reports how the current filter
+would run, without executing it:
+
+- **Scan type** — `IXSCAN` (index chosen, with its name) or `FULL SCAN`
+- **Stage list** — `IXSCAN`/`COLLSCAN → FETCH → MATCH → SORT`
+- **Candidates** — documents examined vs total, matches, elapsed milliseconds
+- A hint explains when no usable index exists. The panel resets whenever the
+  filter changes, and it works on saved views too (the view pipeline runs
+  first, then the plan is measured).
+
+### Saved views
+
+In the **Pipeline studio**, run a pipeline and press **Save as view**. A view
+is a named, **read-only virtual collection** persisted in `<db>/_views.json`
+with its source collection and pipeline. Views appear next to real
+collections (eye badge + source label) in the dashboard, switchers and
+palette, and support querying, pagination, counts, export, charts, explain
+and aggregation — but writes, bulk edit, indexes and schema rules are hidden.
+Deleting a view never touches the source collection.
+
+### Schema analyzer
+
+The scan icon in the collection header opens the **schema analyzer**: every
+dotted field path in the collection with
+
+- **fill rate** (percentage of documents that have the field)
+- **type distribution** (string / number / boolean / object / array / null)
+- **distinct count** (capped at 200) and **sample values**
+- numeric **min / max** where applicable
+
+Use the search box to narrow a long field list. Views can be analyzed too.
+
+### Trash bin
+
+Every delete — single, bulk, or dropping a whole collection — pushes the
+removed documents into the database trash (`<db>/_trash.json`, newest 500).
+The **Trash** tool in the navbar lists entries with collection filter,
+deletion time and a document preview; **Restore** re-inserts the document
+into its original collection (unique indexes are still enforced), while
+**Purge** / **Empty trash** remove entries permanently.
+
+### Activity feed
+
+The **Activity** tool (Alt+5, or the `live sync` chip in the status strip)
+streams engine events as they happen: inserts, updates, deletes, imports,
+index changes, view saves, trash restores, snapshot creation and scheduled
+runs. Filter by kind, pause the feed, clear it, and read relative timestamps.
+Events are held in a 250-entry in-memory ring buffer.
+
+### Scheduled snapshots
+
+The **Snapshots** dialog has a **Scheduled snapshots** section: enable it,
+choose an interval in minutes (minimum 1) and how many snapshots to keep per
+database. The main process runs the schedule across every database in the
+connected data directory and prunes older snapshots to the retention limit.
+The schedule is global and persisted in
+`%APPDATA%/PocketDB/pocketdb-snapshot-schedule.json`; the dialog shows the
+next run time and the last result.
+
+### MCP server
+
+PocketDB ships a standalone **Model Context Protocol** server
+(`electron/mcp-server.cjs`) that exposes the engine over stdio to Claude
+Desktop, Cursor or any MCP client. Open **MCP server** from the palette to
+copy the launch command and a ready-to-paste `mcpServers` JSON config for the
+connected data directory. The server offers 16 tools: database/collection
+listing, `find`, `insert_one`, `insert_many`, `update_many`, `delete_many`,
+`aggregate`, `create_index`, `list_indexes`, `explain`, `analyze_schema`,
+`list_views`, `save_view`, `list_trash` and `restore_trash`. It needs `node`
+on `PATH`; in the packaged app the script lives under
+`resources/mcp/mcp-server.cjs`. Run it manually with:
+
+```bash
+node electron/mcp-server.cjs --data "C:/path/to/pocketdb-data"
+```
+
 ### Schema validation
 
 The shield icon edits optional per-collection rules
@@ -281,7 +386,8 @@ directory, so snapshots never appear as databases. **Restore** swaps the
 live folder atomically (move aside → copy → verify → discard the old one,
 rolling back if the copy fails). The **Snapshots** button in the navbar
 (or Ctrl+K) opens the full snapshot manager — create, restore (two-step
-confirm) and delete any snapshot.
+confirm) and delete any snapshot — plus the **scheduled snapshots** controls
+(interval + retention across every database).
 
 ### The navbar
 
@@ -296,7 +402,11 @@ The top strip carries everything:
   first) and your **recent collections** as one-click shortcuts
 - A **stats chip** for the active database (total docs · on-disk size)
 - A **labeled data-tools cluster** — Files vault · Import · MongoDB ·
-  Snapshots — reachable from any surface (the only place they live)
+  Snapshots · Activity · Trash — reachable from any surface (the only place
+  they live)
+- **Collection tabs** under the bar: every collection you open stays a tab
+  (persisted across launches); close one with its × and the neighbour takes
+  over
 - Palette / refresh / disconnect on the right
 
 ### Import

@@ -31,6 +31,18 @@ contextBridge.exposeInMainWorld('pocketdb', {
   },
 
   /**
+   * Subscribe to engine activity events (inserts, updates, deletes,
+   * imports, snapshots, restores, index changes). Returns an unsubscribe fn.
+   * @param {(payload: object) => void} callback
+   * @returns {() => void}
+   */
+  onActivity: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on('engine:activity', handler);
+    return () => ipcRenderer.removeListener('engine:activity', handler);
+  },
+
+  /**
    * Subscribe to auto-update status pushes ('checking', 'available',
    * 'downloading', 'downloaded', 'up-to-date', 'error'). Unsubscribe fn.
    */
@@ -41,5 +53,5 @@ contextBridge.exposeInMainWorld('pocketdb', {
   },
 
   // Static metadata about the bridge (handy for sanity checks in dev tools).
-  bridgeVersion: '1.2.0',
+  bridgeVersion: '1.3.0',
 });

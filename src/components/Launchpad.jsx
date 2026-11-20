@@ -290,7 +290,7 @@ export default function Launchpad({ initialUri, initialError, onConnected }) {
         )}
 
         <div className="mt-auto pt-10 text-center font-mono text-[10px] text-slate-700">
-          engine v1.2.0 · ndjson storage · fully offline
+          engine v1.3.0 · ndjson storage · fully offline
         </div>
       </div>
 

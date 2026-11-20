@@ -10,6 +10,9 @@ const ROWS = [
   ['Alt+2', 'Collection documents'],
   ['Alt+3', 'Pipeline studio'],
   ['Alt+4', 'Files vault'],
+  ['Alt+5', 'Activity feed'],
+  ['Alt+6', 'Trash — restore deleted documents'],
+  ['Alt+7', 'Schema analyzer for the open collection'],
   ['Esc', 'Close dialogs and the palette'],
   ['↑ ↓ ↵', 'Navigate and run inside the palette'],
 ];

@@ -64,7 +64,7 @@ export function JsonNode({ name, value, depth, defaultOpen = true }) {
   );
 }
 
-export default function JsonTreeView({ docs, onEdit, onDelete, onDuplicate, onHistory, selection, onToggleSelect }) {
+export default function JsonTreeView({ docs, onEdit, onDelete, onDuplicate, onHistory, selection, onToggleSelect, readOnly = false }) {
   return (
     <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
       {docs.map((doc) => {
@@ -92,30 +92,34 @@ export default function JsonTreeView({ docs, onEdit, onDelete, onDuplicate, onHi
             >
               <Clock size={13} />
             </button>
-            <button
-              onClick={() => onEdit(doc)}
-              title="Edit document"
-              className="rounded p-1 text-slate-400 hover:bg-ink-700 hover:text-slate-100"
-              aria-label="Edit document"
-            >
-              <Pencil size={13} />
-            </button>
-            <button
-              onClick={() => onDuplicate(doc)}
-              title="Duplicate document"
-              className="rounded p-1 text-slate-400 hover:bg-ink-700 hover:text-slate-100"
-              aria-label="Duplicate document"
-            >
-              <Copy size={13} />
-            </button>
-            <button
-              onClick={() => onDelete(doc)}
-              title="Delete document"
-              className="rounded p-1 text-slate-400 hover:bg-ink-700 hover:text-rose-400"
-              aria-label="Delete document"
-            >
-              <Trash2 size={13} />
-            </button>
+            {!readOnly && (
+              <>
+                <button
+                  onClick={() => onEdit(doc)}
+                  title="Edit document"
+                  className="rounded p-1 text-slate-400 hover:bg-ink-700 hover:text-slate-100"
+                  aria-label="Edit document"
+                >
+                  <Pencil size={13} />
+                </button>
+                <button
+                  onClick={() => onDuplicate(doc)}
+                  title="Duplicate document"
+                  className="rounded p-1 text-slate-400 hover:bg-ink-700 hover:text-slate-100"
+                  aria-label="Duplicate document"
+                >
+                  <Copy size={13} />
+                </button>
+                <button
+                  onClick={() => onDelete(doc)}
+                  title="Delete document"
+                  className="rounded p-1 text-slate-400 hover:bg-ink-700 hover:text-rose-400"
+                  aria-label="Delete document"
+                >
+                  <Trash2 size={13} />
+                </button>
+              </>
+            )}
           </div>
           <div className="mb-1 flex items-center gap-2 text-[10px] uppercase tracking-wider text-slate-600">
             document <code className="text-brand-300 normal-case">{doc._id}</code>
