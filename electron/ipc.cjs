@@ -267,13 +267,23 @@ function registerIpc(defaultDataDir) {
     'databases.drop': ({ name }) => {
       const result = getEngine().dropDatabase(name);
       dbMeta.remove(name);
+      pushActivity({ op: 'drop', db: name, detail: 'database dropped' });
       return result;
     },
 
     /* -- collections ------------------------------------------------ */
     'collections.list': ({ db }) => getEngine().listCollections(db),
     'collections.create': ({ db, name }) => getEngine().createCollection(db, name),
-    'collections.drop': ({ db, name }) => getEngine().dropCollection(db, name),
+    'collections.drop': ({ db, name }) => {
+      const result = getEngine().dropCollection(db, name);
+      pushActivity({
+        op: result.view ? 'view' : 'drop',
+        db,
+        coll: name,
+        detail: result.view ? `view "${name}" deleted` : `collection "${name}" dropped`,
+      });
+      return result;
+    },
 
     /* -- documents --------------------------------------------------- */
     'documents.find': ({ db, coll, filter, sort, limit, skip, projection }) =>
@@ -436,9 +446,11 @@ function registerIpc(defaultDataDir) {
       return view;
     },
     'views.delete': ({ db, id }) => {
-      const res = getEngine().deleteView(db, id);
-      pushActivity({ op: 'view', db, detail: 'view deleted' });
-      return res;
+      const view = getEngine().listViews(db).find((v) => v.id === id);
+      if (!view) throw new Error(`View "${id}" not found in "${db}".`);
+      getEngine().deleteView(db, id);
+      pushActivity({ op: 'view', db, coll: view.coll, detail: `view "${view.name}" deleted` });
+      return { ok: true };
     },
 
     /* -- trash (soft-deleted documents) -------------------------------- */
@@ -448,8 +460,19 @@ function registerIpc(defaultDataDir) {
       pushActivity({ op: 'restore', db, coll: res.coll, detail: `restored ${res.restoredId}` });
       return res;
     },
-    'trash.purge': ({ db, trashId }) => getEngine().purgeTrash(db, trashId),
-    'trash.empty': ({ db }) => getEngine().emptyTrash(db),
+    'trash.purge': ({ db, trashId }) => {
+      const entry = getEngine().readTrash(db).entries.find((e) => e.trashId === trashId);
+      if (!entry) throw new Error('Trash entry not found.');
+      getEngine().purgeTrash(db, trashId);
+      pushActivity({ op: 'purge', db, coll: entry.coll, detail: `purged ${entry.doc._id}` });
+      return { ok: true };
+    },
+    'trash.empty': ({ db }) => {
+      const count = getEngine().listTrash(db).length;
+      getEngine().emptyTrash(db);
+      pushActivity({ op: 'empty', db, detail: `emptied trash (${count} entries)` });
+      return { ok: true };
+    },
 
     /* -- schema validation -------------------------------------------- */
     'schema.get': ({ db, coll }) => getEngine().getSchema(db, coll),
@@ -480,7 +503,11 @@ function registerIpc(defaultDataDir) {
       notifyFsChange();
       return result;
     },
-    'snapshots.delete': ({ db, id }) => Snapshots.deleteSnapshot({ rootDir: snapshotsDir(), db, id }),
+    'snapshots.delete': ({ db, id }) => {
+      Snapshots.deleteSnapshot({ rootDir: snapshotsDir(), db, id });
+      pushActivity({ op: 'snapshot', db, detail: `snapshot ${id} deleted` });
+      return { ok: true };
+    },
     'snapshots.scheduleGet': () => {
       const cfg = readSchedule();
       return {
@@ -513,7 +540,12 @@ function registerIpc(defaultDataDir) {
     /* -- import (JSON / NDJSON / CSV + MongoDB mirror) ------------------- */
     'imports.documents': ({ db, coll, text, format }) => {
       const result = importDocuments(getEngine(), { db, coll, text, format });
-      pushActivity({ op: 'import', db, coll, detail: `${result.inserted ?? result.count ?? '?'} imported` });
+      pushActivity({
+        op: 'import',
+        db,
+        coll,
+        detail: `${result.inserted}/${result.total} imported${result.failed > 0 ? ` (${result.failed} failed)` : ''}`,
+      });
       return result;
     },
     'imports.mongodb': async ({ uri, dbs, limitPerColl }) => {

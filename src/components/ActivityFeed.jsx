@@ -2,13 +2,13 @@
  * ActivityFeed — live tail of engine operations.
  *
  * The main process pushes 'engine:activity' for inserts, updates, deletes,
- * imports, snapshots, restores and index changes. This dialog keeps a local
- * ring of the newest events (plus the recent history fetched on open), with
- * an op filter, pause and clear controls.
+ * imports, snapshots, restores, index/view changes, drops, purges and trash
+ * emptying. This dialog keeps a local ring of the newest events (plus the
+ * recent history fetched on open), with an op filter, pause and clear controls.
  */
 import {
   Activity, Archive, ArrowDownToLine, ArrowUpFromLine, Filter, History, KeyRound,
-  Pause, Play, RotateCcw, Trash2,
+  Pause, Play, RotateCcw, Trash2, X,
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../lib/api.js';
@@ -23,9 +23,12 @@ const OP_STYLE = {
   snapshot: { label: 'snapshot', cls: 'bg-violet-500/15 text-violet-300', Icon: Archive },
   index: { label: 'index', cls: 'bg-teal-500/15 text-teal-300', Icon: KeyRound },
   view: { label: 'view', cls: 'bg-indigo-500/15 text-indigo-300', Icon: ArrowUpFromLine },
+  drop: { label: 'drop', cls: 'bg-rose-500/15 text-rose-300', Icon: Archive },
+  purge: { label: 'purge', cls: 'bg-slate-500/15 text-slate-300', Icon: X },
+  empty: { label: 'empty', cls: 'bg-rose-500/15 text-rose-300', Icon: Trash2 },
 };
 
-const FILTERS = ['all', 'insert', 'update', 'delete', 'import', 'restore', 'snapshot', 'index', 'view'];
+const FILTERS = ['all', 'insert', 'update', 'delete', 'import', 'restore', 'snapshot', 'index', 'view', 'drop', 'purge', 'empty'];
 
 function timeAgo(at) {
   const sec = Math.max(0, Math.round((Date.now() - at) / 1000));
@@ -66,7 +69,7 @@ export default function ActivityFeed({ onClose }) {
   return (
     <Modal
       title="Activity"
-      subtitle="Live engine events — inserts, updates, deletes, imports, snapshots"
+      subtitle="Live engine events — inserts, updates, deletes, imports, snapshots, drops"
       onClose={onClose}
       width="max-w-2xl"
       footer={

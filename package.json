@@ -64,11 +64,19 @@
       "icon": "build/icon.ico"
     },
     "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "license": "LICENSE.md",
       "installerIcon": "build/icon.ico",
       "uninstallerIcon": "build/icon.ico",
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "PocketDB"
+      "shortcutName": "PocketDB",
+      "runAfterFinish": true,
+      "perMachine": false,
+      "uninstallDisplayName": "PocketDB",
+      "deleteAppDataOnUninstall": false,
+      "include": "scripts/pocketdb-installer.nsh"
     },
     "afterPack": "scripts/afterPack.cjs",
     "mac": {
